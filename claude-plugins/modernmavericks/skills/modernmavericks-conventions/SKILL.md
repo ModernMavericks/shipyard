@@ -102,6 +102,38 @@ shared-cmake's facilities rather than trusting the runner:
   smoke (golang's best-effort Rosetta self-test).
 - Back it with **out-of-band re-validation on real 10.9 hardware** before trusting a release.
 
+## Where family-authored 10.9 back-fills live (headers + polyfill symbols)
+
+When a build needs a 10.9-missing symbol or header that neither the 10.9 SDK **nor**
+`macports-legacy-support` provides, someone has to hand-author the back-fill. **It does NOT go into
+`mavericks-legacysupport`.** That repo is a *clean port* of `macports/macports-legacy-support` — its
+`UPSTREAM_VERSION` tracks the MacPorts tag and Renovate bumps it self-contained; adding our own code to
+its shim forks the port and breaks that clean bump (the next upstream bump silently drops our addition).
+
+**The golang `REQUIRE_DEFINED='_clock_gettime'` pattern is NOT a precedent for putting our code there.**
+`clock_gettime` is defined by the **real upstream** macports-legacy-support, which genuinely carries it —
+golang just *links the port*. Our *own* back-fill is a different thing (upstream doesn't have it) and
+needs a different home. Three tiers, in order:
+
+1. **Offer it to the real upstream** — `github.com/macports/macports-legacy-support` (the MacPorts
+   project). This is the only true "upstreaming"; if accepted it reaches the whole family through the
+   normal `mavericks-legacysupport` port bump, zero family maintenance. Best for a genuinely-general C
+   symbol back-fill.
+2. **`mavericks-compat`** — the family's home for its **own** 10.9 back-fills (header shims + a compiled
+   `libMavericksCompat.a` of polyfill symbols); a **self-upstream** product (`YYYYMMDD.N`, no
+   `-mavericks`). The **default** home for anything ours that isn't yet, or won't be, upstream. Consumers
+   fetch its `.pkg` and link the `.a` / `-isystem` the headers, like any pinned ingredient. **Boundary:
+   it carries ONLY what upstream does not** — when the port gains a symbol we carry, drop ours (a
+   duplicate-symbol link error is the signal the boundary was violated). It builds its `.a` with the
+   runner's stock clang + the pinned 10.9 SDK, **not** clang-22 (clang-22 consumes its headers, so
+   depending on it would be a build cycle).
+3. **Per-repo** — only a genuinely repo-specific quirk (a header one product's build alone needs),
+   recorded in that repo's `INGREDIENTS.md` as a baked-in input. Not for anything another repo would want.
+
+**Do NOT** hand-carry a generically-useful back-fill as a private `.c`/header per repo, and **do NOT**
+put a linked runtime symbol in `shared-cmake` (it holds build facilities — CMake fns + scripts — not
+runtime back-fills).
+
 ## Renovate & automerge
 
 Consumer `renovate.json` is `{"$schema", "extends": ["github>ModernMavericks/shared-cmake"]}` plus
