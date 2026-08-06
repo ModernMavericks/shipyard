@@ -16,7 +16,7 @@ export CA_SHA256="3ff344e30b9b1ed2971044eabb438a08f2e2245ddb5f8ab1a3ad8b63ab4eaf
 export MACOS_MIN="10.9"
 export GO_SRC_SHA512="adacc6a34ad239d98277acd2ac8da867110da0b184dbbafb82e8a06d2b7fd234"
 export GO_VERSION="$(upstream_version)"
-export PKG_VERSION=`cat "$REPO_ROOT/VERSION"`
+export PKG_VERSION=`cat "$REPO_ROOT/UPSTREAM_VERSION"`
 SH
 printf 'line one\nline two\nline three\n' > vendor/cacert.pem
 git add -A; git commit -qm base; git tag 20260727-mavericks.2

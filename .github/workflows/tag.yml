@@ -25,7 +25,7 @@ jobs:
           set -eu
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          ver="$(cat VERSION)"
+          ver="$(cat UPSTREAM_VERSION)"
           major="v${ver%%.*}"
           if git rev-parse -q --verify "refs/tags/v$ver" >/dev/null; then
             echo "v$ver already exists -- leaving it (bump VERSION to cut a new release)"

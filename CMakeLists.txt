@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" _MSC_VERSION LIMIT_COUNT 1)
+# First-party repo (we are the upstream): the self-owned version lives in committed UPSTREAM_VERSION;
+# VERSION is the gitignored build product. Read VERSION if present, else fall back to UPSTREAM_VERSION —
+# the same shape this project's own conventions require of every consumer (a committed VERSION goes stale
+# while tags move; check-family-conventions.sh fails a tracked one). Not resolve-version.sh: that hardcodes
+# `-mavericks.N`, which is for repackaged upstreams, not for us.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
+  file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" _MSC_VERSION LIMIT_COUNT 1)
+else()
+  file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/UPSTREAM_VERSION" _MSC_VERSION LIMIT_COUNT 1)
+endif()
 project(MavericksSharedCMake VERSION ${_MSC_VERSION} LANGUAGES NONE)
 
 # This project ships CMake modules + helper scripts (no compiled artifacts). It
