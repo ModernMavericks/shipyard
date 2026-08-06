@@ -1,5 +1,5 @@
 {
   "name": "modernmavericks",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Conventions for building ModernMavericks (mavericks-*) projects: shared-cmake usage, Renovate/automerge policy, versioning, release workflow, Sparkle updater, and warranted-deviation judgment."
 }

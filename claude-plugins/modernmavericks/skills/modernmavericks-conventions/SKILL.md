@@ -271,7 +271,7 @@ it **drops the `-mavericks` suffix** and versions itself directly:
 
 - **date-based `YYYYMMDD.N`** (`mavericks-porthole`; N counts the day's releases starting at `.1`, never
   omitted) — the family's date form but *without* `-mavericks`, precisely because it is not a port;
-- **semver `vX.Y.Z`** (`mavericks-magic-trackpad2`), or dimmit's `v0.0.YYYYMMDD.N`.
+- **semver `vX.Y.Z`**, or dimmit's `v0.0.YYYYMMDD.N`.
 
 Mechanics for a self-upstream repo: `UPSTREAM_VERSION` (if used) is the repo's OWN version/date,
 hand-bumped (no Renovate datasource — nothing external to track). There is **no `resolve-version.sh`** (it
