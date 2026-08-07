@@ -1,6 +1,6 @@
 name: tag
 
-# Version shared-cmake as a GitHub Action. On each push to main: create the immutable
+# Version shipyard as a GitHub Action. On each push to main: create the immutable
 # vX.Y.Z tag (once, from the VERSION file) and fast-forward the moving major tag vX.
 # Consumers pin @v1 (moving -> latest v1.x) or @vX.Y.Z (exact). Renovate's native
 # github-actions manager handles the pin -- no custom manager, no marker comment.

@@ -1,6 +1,6 @@
 name: CI
 
-# shared-cmake had no CI at all: the repo that tells the family "tests that exist must run" ran none of
+# shipyard had no CI at all: the repo that tells the family "tests that exist must run" ran none of
 # its own. That matters more here than anywhere else — these scripts reach all seven product repos
 # through the moving @v1 tag, so a break here ships everywhere before anyone notices.
 #
@@ -25,9 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Installs shared-cmake (this repo) and, incidentally, bats — which is what makes the *.bats
+      # Installs shipyard (this repo) and, incidentally, bats — which is what makes the *.bats
       # suites below actually run instead of reporting SKIP.
-      - name: Install mavericks-shared-cmake (self)
+      - name: Install mavericks-shipyard (self)
         uses: ./.github/actions/install
 
       - name: ctest (parameterized suites)

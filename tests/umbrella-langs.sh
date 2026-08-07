@@ -7,7 +7,7 @@ set -eu
 # ctest passes the source dir (see add_test). Called bare -- as the shared test runner does when it
 # globs tests/*.sh -- there is nothing to include: 77 = SKIP, not a failure.
 [ "$#" -ge 1 ] || { echo "no source dir given (ctest supplies it) -- skipping" >&2; exit 77; }
-SRC="${1:?usage: umbrella-langs.sh <mavericks-shared-cmake source dir>}"
+SRC="${1:?usage: umbrella-langs.sh <mavericks-shipyard source dir>}"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 CC=/usr/bin/clang
 [ -x "$CC" ] || { echo "SKIP: no Apple clang at $CC"; exit 0; }

@@ -18,11 +18,11 @@ concurrency:
 jobs:
   build:
     steps:
-      - run: sh "$MSC_SCRIPTS/run-repo-tests.sh"
+      - run: sh "$SHIPYARD_SCRIPTS/run-repo-tests.sh"
       - run: gh release create "$TAG" dist/* --notes-file "$NOTES"
 YML
   printf '# Build ingredients\n' > "$1/INGREDIENTS.md"
-  printf '{"extends":["github>ModernMavericks/shared-cmake"]}\n' > "$1/.github/renovate.json"
+  printf '{"extends":["github>ModernMavericks/shipyard"]}\n' > "$1/.github/renovate.json"
   printf '#!/bin/sh\nexit 0\n' > "$1/tests/a-test.sh"
   # A compliant repo commits UPSTREAM_VERSION and gitignores VERSION (a build product), and the gate
   # asks git what is tracked -- so the fixture has to be a real checkout.
@@ -34,7 +34,7 @@ YML
 # compliant repo passes
 mkrepo "$work/ok"; (cd "$work/ok" && sh "$S" >/dev/null) || { echo "FAIL compliant repo should pass"; exit 1; }
 
-# no release.yml at all (shared-cmake itself) -> passes
+# no release.yml at all (shipyard itself) -> passes
 mkdir -p "$work/norel"; (cd "$work/norel" && sh "$S" >/dev/null) || { echo "FAIL no-release.yml should pass"; exit 1; }
 
 # 1. missing concurrency
@@ -71,14 +71,14 @@ if (cd "$work/i" && sh "$S" >/dev/null 2>&1); then echo "FAIL missing INGREDIENT
 
 # 4. a Renovate key restating the preset's own value is redundant -> fail
 mkrepo "$work/r"
-printf '{"extends":["github>ModernMavericks/shared-cmake"],"ignoreTests":false}\n' > "$work/r/.github/renovate.json"
+printf '{"extends":["github>ModernMavericks/shipyard"],"ignoreTests":false}\n' > "$work/r/.github/renovate.json"
 if (cd "$work/r" && sh "$S" >/dev/null 2>&1); then echo "FAIL redundant renovate key should fail"; exit 1; fi
 (cd "$work/r" && sh "$S" 2>&1 | grep -qi ignoreTests) || { echo "FAIL should name the key"; exit 1; }
 
 # ...but the SAME key with a DIFFERENT value is a deliberate override, not drift. A repo with no build
 # to gate legitimately opts back into blind automerge with ignoreTests:true; the gate must allow it.
 mkrepo "$work/r2"
-printf '{"extends":["github>ModernMavericks/shared-cmake"],"ignoreTests":true}\n' > "$work/r2/.github/renovate.json"
+printf '{"extends":["github>ModernMavericks/shipyard"],"ignoreTests":true}\n' > "$work/r2/.github/renovate.json"
 (cd "$work/r2" && sh "$S" >/dev/null) || { echo "FAIL deliberate ignoreTests:true override should pass"; exit 1; }
 
 # 5. release publishes no notes
@@ -89,20 +89,20 @@ if (cd "$work/n" && sh "$S" >/dev/null 2>&1); then echo "FAIL no notes should fa
 # alike); a repo restricts automerge only where a bad bump would build fine and be wrong -- the case a
 # green build cannot catch. Unexplained, that is indistinguishable from drift.
 mkrepo "$work/am"
-printf '%s\n' '{"extends":["github>ModernMavericks/shared-cmake"],"packageRules":[{"matchDepNames":["x"],"matchUpdateTypes":["minor"],"automerge":false}]}' \
+printf '%s\n' '{"extends":["github>ModernMavericks/shipyard"],"packageRules":[{"matchDepNames":["x"],"matchUpdateTypes":["minor"],"automerge":false}]}' \
   > "$work/am/.github/renovate.json"
 if (cd "$work/am" && sh "$S" >/dev/null 2>&1); then echo "FAIL undescribed automerge exception should fail"; exit 1; fi
 (cd "$work/am" && sh "$S" 2>&1 | grep -qi 'automerge') || { echo "FAIL should name the automerge rule"; exit 1; }
 
 # ...with a reason, it passes
 mkrepo "$work/am2"
-printf '%s\n' '{"extends":["github>ModernMavericks/shared-cmake"],"packageRules":[{"description":"A minor bump needs LLVM_BRANCH to follow, which no regex can infer: it would build fine and be wrong.","matchDepNames":["x"],"matchUpdateTypes":["minor"],"automerge":false}]}' \
+printf '%s\n' '{"extends":["github>ModernMavericks/shipyard"],"packageRules":[{"description":"A minor bump needs LLVM_BRANCH to follow, which no regex can infer: it would build fine and be wrong.","matchDepNames":["x"],"matchUpdateTypes":["minor"],"automerge":false}]}' \
   > "$work/am2/.github/renovate.json"
 (cd "$work/am2" && sh "$S" >/dev/null) || { echo "FAIL described exception should pass"; exit 1; }
 
 # a rule that does NOT touch automerge (e.g. allowedVersions) needs no such reason
 mkrepo "$work/am3"
-printf '%s\n' '{"extends":["github>ModernMavericks/shared-cmake"],"packageRules":[{"matchDepNames":["x"],"allowedVersions":"/^v?[0-9.]+$/"}]}' \
+printf '%s\n' '{"extends":["github>ModernMavericks/shipyard"],"packageRules":[{"matchDepNames":["x"],"allowedVersions":"/^v?[0-9.]+$/"}]}' \
   > "$work/am3/.github/renovate.json"
 (cd "$work/am3" && sh "$S" >/dev/null) || { echo "FAIL non-automerge rule should pass"; exit 1; }
 
@@ -115,7 +115,7 @@ import sys
 p=sys.argv[1]; s=open(p).read()
 s=s.replace('      - run: gh release create "$TAG" dist/* --notes-file "$NOTES"\n',
             '  publish:\n'
-            '    uses: ModernMavericks/shared-cmake/.github/workflows/publish-release.yml@v1\n'
+            '    uses: ModernMavericks/shipyard/.github/workflows/publish-release.yml@v1\n'
             '    with: { version: "1.0.0", artifact: pkg }\n')
 open(p,'w').write(s)
 PY

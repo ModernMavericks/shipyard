@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 # LANGUAGES NONE: no C/CXX compiler enabled -> if including MavericksCompatGuard
 # fired RequireAppleClang, configure would FATAL. It must not.
 project(standalone_include LANGUAGES NONE)
-find_package(MavericksSharedCMake REQUIRED)
+find_package(MavericksShipyard REQUIRED)
 include(MavericksCompatGuard)
 if(NOT COMMAND mavericks_assert_binary_compatible)
   message(FATAL_ERROR "mavericks_assert_binary_compatible not defined after include(MavericksCompatGuard)")

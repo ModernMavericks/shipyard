@@ -2,9 +2,9 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": [
     "Shared Renovate policy for mavericks-* projects. A consumer's entire .github/renovate.json is:",
-    "{ \"$schema\": \"https://docs.renovatebot.com/renovate-schema.json\", \"extends\": [\"github>ModernMavericks/shared-cmake\"] }",
-    "Provides config:recommended + automerge. shared-cmake is a versioned GitHub Action: consumers pin",
-    "'uses: ModernMavericks/shared-cmake/...@v1' and Renovate's native github-actions manager tracks it",
+    "{ \"$schema\": \"https://docs.renovatebot.com/renovate-schema.json\", \"extends\": [\"github>ModernMavericks/shipyard\"] }",
+    "Provides config:recommended + automerge. shipyard is a versioned GitHub Action: consumers pin",
+    "'uses: ModernMavericks/shipyard/...@v1' and Renovate's native github-actions manager tracks it",
     "-- no custom manager needed for it. This preset does add a manager for mavericks-legacysupport",
     "releases (tag the pinned version with a '# mavericks-legacysupport' comment).",
     "AUTOMERGE POLICY: if it builds and passes, it ships -- patch, minor AND major alike. ignoreTests",

@@ -38,8 +38,8 @@ jobs:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
 
-      - name: Install mavericks-shared-cmake (for scripts/repackage-decision.sh)
-        uses: ModernMavericks/shared-cmake/.github/actions/install@v1
+      - name: Install mavericks-shipyard (for scripts/repackage-decision.sh)
+        uses: ModernMavericks/shipyard/.github/actions/install@v1
 
       - name: Dispatch a repackage if a build ingredient (not own-upstream) moved
         env:
@@ -50,7 +50,7 @@ jobs:
           DISPATCH_FIELD: ${{ inputs.dispatch-field }}
         run: |
           set -eu
-          SCR="$(cat "$HOME/.cmake/packages/MavericksSharedCMake/"* | head -1)/scripts"
+          SCR="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* | head -1)/scripts"
           before="$BEFORE"; case "$before" in ''|0000000000000000000000000000000000000000) before="HEAD~1";; esac
           CHANGED="$(git diff --name-only "$before" HEAD)"; export CHANGED
           # The RESOLVED rev, not the raw event field: a path:KEY entry needs to read the file as it

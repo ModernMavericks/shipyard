@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "This repo has no product build to gate on, so it keeps blind automerge for its trivial action/dep bumps even though the shared preset now defaults ignoreTests:false.",
-  "extends": ["github>ModernMavericks/shared-cmake"],
+  "extends": ["github>ModernMavericks/shipyard"],
   "ignoreTests": true
 }

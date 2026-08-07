@@ -8,7 +8,7 @@
 #
 #   project(foo LANGUAGES C OBJC)
 #
-#   find_package(MavericksSharedCMake REQUIRED)   # sets up CMAKE_MODULE_PATH
+#   find_package(MavericksShipyard REQUIRED)   # sets up CMAKE_MODULE_PATH
 #   include(Mavericks)                 # mode detect + AppleClang check + helpers
 #   # (Sparkle-updater projects also: include(MavericksSparkle))
 #
@@ -21,7 +21,7 @@
 # project on a non-Apple toolchain sets(MAVERICKS_REQUIRE_APPLECLANG OFF) first.
 # Install once with `cmake --install` (self-registers); see README.
 
-set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shared-cmake root")
+set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shipyard root")
 
 # Newer SDKs deprecate the 10.9-era Cocoa/IOKit APIs these projects use; we still
 # target them deliberately. (Deployment target + arch are the consumer's, set before

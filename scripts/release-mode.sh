@@ -1,7 +1,7 @@
 #!/bin/sh
 # Print the version mode for THIS run: "local" (a repackage, N+1) or "auto" (the shipped N).
 #
-#   VER="$(sh "$MSC_SCRIPTS/resolve-version.sh" "$(sh "$MSC_SCRIPTS/release-mode.sh")")"
+#   VER="$(sh "$SHIPYARD_SCRIPTS/resolve-version.sh" "$(sh "$SHIPYARD_SCRIPTS/release-mode.sh")")"
 #
 # Exists because EVERY JOB IN ONE RUN MUST ANSWER THIS IDENTICALLY, and container-tools proved that
 # per-job reasoning does not: build-macos knew a repackage was in progress and resolved N+1 (.15),

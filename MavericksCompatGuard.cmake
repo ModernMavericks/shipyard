@@ -3,7 +3,7 @@
 # include(Mavericks) (e.g. LANGUAGES NONE / Go) can include just this module.
 
 # Capture the install dir (this file sits alongside scripts/) at include time.
-set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shared-cmake root")
+set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shipyard root")
 
 # mavericks_assert_binary_compatible(<target>): after linking <target>, assert its Mach-O is
 # x86_64 + LC_VERSION_MIN_MACOSX 10.9 + free of post-10.9 undefined imports. Forwards

@@ -12,7 +12,7 @@
 # So a fresh clone configures without a release having been cut first.
 #
 # The logic lives in scripts/resolve-version.sh (shell, under test); this is the CMake doorway to it.
-set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shared-cmake root")
+set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shipyard root")
 
 function(mavericks_resolve_version outvar)
   cmake_parse_arguments(A "" "MODE;UPSTREAM_FILE;ROOT" "" ${ARGN})

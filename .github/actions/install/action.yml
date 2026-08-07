@@ -1,9 +1,9 @@
-name: Install mavericks-shared-cmake
+name: Install mavericks-shipyard
 description: >
-  Configure + install mavericks-shared-cmake to a prefix so consumers find it via
-  find_package() / the CMake user package registry. shared-cmake does its own
+  Configure + install mavericks-shipyard to a prefix so consumers find it via
+  find_package() / the CMake user package registry. shipyard does its own
   installing -- a consumer just references this action at a pinned ref (that ref IS
-  the version pin); it should NOT clone + `cmake --install` shared-cmake by hand.
+  the version pin); it should NOT clone + `cmake --install` shipyard by hand.
 
 inputs:
   prefix:
@@ -22,7 +22,7 @@ runs:
         root="$(cd "$GITHUB_ACTION_PATH/../../.." && pwd)"
         prefix="${{ inputs.prefix }}"; [ -n "$prefix" ] || prefix="$HOME/.local"
 
-        # Ensure bats BEFORE configuring: shared-cmake's CMakeLists registers its shell-helper tests
+        # Ensure bats BEFORE configuring: shipyard's CMakeLists registers its shell-helper tests
         # only when bats is present ("bats not found -- shell helper tests won't run via ctest"), so
         # installing it afterwards would leave that first configure short of tests.
         # run-repo-tests.sh likewise reports SKIP for *.bats without it, which is honest but useless:
@@ -40,15 +40,15 @@ runs:
 
         cmake -S "$root" -B "$RUNNER_TEMP/msc-build"
         cmake --install "$RUNNER_TEMP/msc-build" --prefix "$prefix"
-        echo "installed mavericks-shared-cmake -> $prefix (registered in the CMake user package registry)"
+        echo "installed mavericks-shipyard -> $prefix (registered in the CMake user package registry)"
 
         # Export the scripts dir so consumers stop re-deriving it. Every consumer previously repeated
-        # SCR="$(cat "$HOME/.cmake/packages/MavericksSharedCMake/"* | head -1)/scripts" -- 11 copies
+        # SCR="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* | head -1)/scripts" -- 11 copies
         # across the family. The action already knows where it installed, so it can just say so.
         # The registry lookup stays valid (it is what this reads), so adoption is per-repo, no flag day.
-        scripts="$(cat "$HOME/.cmake/packages/MavericksSharedCMake/"* 2>/dev/null | head -1)/scripts"
-        [ -d "$scripts" ] || scripts="$prefix/share/cmake/MavericksSharedCMake/scripts"
-        [ -d "$scripts" ] || { echo "::error::cannot locate installed shared-cmake scripts dir"; exit 1; }
-        echo "MSC_SCRIPTS=$scripts" >> "$GITHUB_ENV"
-        echo "MSC_SCRIPTS=$scripts"
+        scripts="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* 2>/dev/null | head -1)/scripts"
+        [ -d "$scripts" ] || scripts="$prefix/share/cmake/MavericksShipyard/scripts"
+        [ -d "$scripts" ] || { echo "::error::cannot locate installed shipyard scripts dir"; exit 1; }
+        echo "SHIPYARD_SCRIPTS=$scripts" >> "$GITHUB_ENV"
+        echo "SHIPYARD_SCRIPTS=$scripts"
 

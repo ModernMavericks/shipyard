@@ -1,6 +1,6 @@
 # MavericksDecisions.cmake -- forced explicit decisions (no silent defaults for
 # decisions that matter). Currently: the app icon. include()d by Mavericks.cmake.
-set(MAVERICKS_DECISIONS_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shared-cmake root (decisions)")
+set(MAVERICKS_DECISIONS_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shipyard root (decisions)")
 
 # mavericks_reject_placeholder_icon(<target> <icns>)
 #   FATAL if <icns> is a registered PLACEHOLDER (scripts/placeholder-icons.sha256), unless

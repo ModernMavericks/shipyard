@@ -1,4 +1,4 @@
-# shared-cmake
+# shipyard
 
 Build goop for Mac OS X 10.9 Mavericks.
 
@@ -18,7 +18,7 @@ In your `CMakeLists.txt`:
 ```cmake
 project(foo LANGUAGES C OBJC)
 
-find_package(MavericksSharedCMake REQUIRED)
+find_package(MavericksShipyard REQUIRED)
 include(Mavericks)
 
 add_executable(foo ...)
@@ -30,7 +30,7 @@ In your `CMakePresets.json`:
 ```json
 {
   "version": 6,
-  "include": ["$env{HOME}/.local/share/cmake/MavericksSharedCMake/mavericks-presets.json"],
+  "include": ["$env{HOME}/.local/share/cmake/MavericksShipyard/mavericks-presets.json"],
   "configurePresets": [
     { "name": "native", "inherits": "mavericks-native" },
     { "name": "cross",  "inherits": "mavericks-cross"  }
@@ -41,7 +41,7 @@ In your `CMakePresets.json`:
 In your `.github/workflows/*.yml` (if applicable):
 
 ```yaml
-- uses: ModernMavericks/shared-cmake/.github/actions/install@v1
+- uses: ModernMavericks/shipyard/.github/actions/install@v1
 ```
 
 Then build:

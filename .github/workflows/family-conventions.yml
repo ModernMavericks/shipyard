@@ -3,15 +3,15 @@ name: family-conventions
 # Reusable: the family conventions gate. A consumer adds a three-line caller job and gets every check
 # in scripts/check-family-conventions.sh, including ones added later -- the caller never changes.
 #
-# It checks out shared-cmake itself rather than expecting $MSC_SCRIPTS, so it works in repos that do
-# not consume shared-cmake's CMake side at all (swift-toolchain builds and mirrors; it has no install
+# It checks out shipyard itself rather than expecting $SHIPYARD_SCRIPTS, so it works in repos that do
+# not consume shipyard's CMake side at all (swift-toolchain builds and mirrors; it has no install
 # step, no updater, no .pkg). A gate only some repos can run is not a family convention.
 
 on:
   workflow_call:
     inputs:
-      shared-cmake-ref:
-        description: "shared-cmake ref to take the gate from. Default v1 (the moving major tag)."
+      shipyard-ref:
+        description: "shipyard ref to take the gate from. Default v1 (the moving major tag)."
         type: string
         required: false
         default: v1
@@ -22,12 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check out shared-cmake (for the gate script)
+      - name: Check out shipyard (for the gate script)
         uses: actions/checkout@v7
         with:
-          repository: ModernMavericks/shared-cmake
-          ref: ${{ inputs.shared-cmake-ref }}
-          path: .shared-cmake
+          repository: ModernMavericks/shipyard
+          ref: ${{ inputs.shipyard-ref }}
+          path: .shipyard
 
       - name: Family conventions gate
-        run: sh .shared-cmake/scripts/check-family-conventions.sh
+        run: sh .shipyard/scripts/check-family-conventions.sh

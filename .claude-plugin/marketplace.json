@@ -5,7 +5,7 @@
     {
       "name": "modernmavericks",
       "source": "./claude-plugins/modernmavericks",
-      "description": "ModernMavericks family conventions: shared-cmake usage, Renovate/automerge policy (ignoreTests + green-gate), versioning (UPSTREAM_VERSION + version.sh), the release workflow, Sparkle updater, and when a deviation is warranted."
+      "description": "ModernMavericks family conventions: shipyard usage, Renovate/automerge policy (ignoreTests + green-gate), versioning (UPSTREAM_VERSION + version.sh), the release workflow, Sparkle updater, and when a deviation is warranted."
     }
   ]
 }

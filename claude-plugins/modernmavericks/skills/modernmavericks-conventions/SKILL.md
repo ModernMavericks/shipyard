@@ -1,13 +1,13 @@
 ---
 name: modernmavericks-conventions
-description: Use when creating or modifying a ModernMavericks (mavericks-*) project — its release workflow, Renovate/automerge config, versioning, shared-cmake usage, or Sparkle updater — or when deciding whether a deviation from the family conventions is warranted.
+description: Use when creating or modifying a ModernMavericks (mavericks-*) project — its release workflow, Renovate/automerge config, versioning, shipyard usage, or Sparkle updater — or when deciding whether a deviation from the family conventions is warranted.
 ---
 
 # ModernMavericks project conventions
 
 ModernMavericks repos (`mavericks-*`) each cross-build one upstream thing into a **Mac OS X 10.9
 (Mavericks)**-compatible `.pkg` with a **Sparkle** auto-updater, on a modern Apple-Silicon runner,
-with **no 10.9 build runner anywhere**. They share a CMake/Renovate helper (`ModernMavericks/shared-cmake`)
+with **no 10.9 build runner anywhere**. They share a CMake/Renovate helper (`ModernMavericks/shipyard`)
 and a common release/versioning shape. This skill is the family's conventions plus the judgment calls
 that copying one repo can't teach.
 
@@ -25,21 +25,21 @@ The family has an older/simpler variant and a current/mature variant. **Start fr
 | **mavericks-legacysupport** | the `version.sh`/`lib.sh`/`release-notes-file.sh` scripts verbatim | origin of the auto-cut pattern |
 | swift-toolchain, swift-runtime | the **tag-only-publish** release model (see below) | when you don't auto-cut on main |
 
-## shared-cmake: consume its facilities, never hand-roll them
+## shipyard: consume its facilities, never hand-roll them
 
-- Install via its **action**: `uses: ModernMavericks/shared-cmake/.github/actions/install@v1`. It
+- Install via its **action**: `uses: ModernMavericks/shipyard/.github/actions/install@v1`. It
   self-registers in the CMake user package registry; consume it downstream with `find_package` — **no
   `CMAKE_PREFIX_PATH`, no vendored copy, no hand-run `cmake --install`.**
 - `@v1` is the **moving major tag**; Renovate's native github-actions manager tracks it — **no custom
-  manager, no SHA pin, no marker comment** for it. It moves **automatically**: shared-cmake's `tag.yml`
+  manager, no SHA pin, no marker comment** for it. It moves **automatically**: shipyard's `tag.yml`
   runs on every push to `main`, cuts the immutable `vX.Y.Z` from `VERSION`, and fast-forwards `@v1` to
-  that commit. So a shared-cmake change reaches consumers by **pushing `main`** — never move `@v1` by
+  that commit. So a shipyard change reaches consumers by **pushing `main`** — never move `@v1` by
   hand, and there's no separate "publish" step to run.
-- **After `install@v1`, use `$MSC_SCRIPTS`** — the action exports the installed scripts dir. Do NOT
-  re-derive it with `SH="$(cat "$HOME/.cmake/packages/MavericksSharedCMake/"* | head -1)/scripts"`;
+- **After `install@v1`, use `$SHIPYARD_SCRIPTS`** — the action exports the installed scripts dir. Do NOT
+  re-derive it with `SH="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* | head -1)/scripts"`;
   that incantation appeared 11 times across the family before it was exported once. (It remains valid
-  — it is what the action itself reads — so adopting `$MSC_SCRIPTS` is per-repo, never a flag day.)
-- Reuse a sibling checkout of shared-cmake locally; don't duplicate its logic.
+  — it is what the action itself reads — so adopting `$SHIPYARD_SCRIPTS` is per-repo, never a flag day.)
+- Reuse a sibling checkout of shipyard locally; don't duplicate its logic.
 
 **Use its facilities for 10.9-correctness — do NOT reinvent SDK fetching, floors, build-mode handling,
 updaters, signing, or compat checks:**
@@ -80,7 +80,7 @@ of the line a script is on. When a script must work in both places, the 10.9 con
 
 The product must run on **10.9**, but **there is no 10.9 build runner in CI** — every project cross-builds
 on a modern Mac. So each project MUST establish that its cross-build equals a native-10.9 build, via
-shared-cmake's facilities rather than trusting the runner:
+shipyard's facilities rather than trusting the runner:
 
 - Drive the build through the **mode** machinery (`mavericks_build_mode`) so native and cross are the same
   recipe against the same pinned 10.9 SDK and floor — not two divergent paths.
@@ -131,12 +131,12 @@ needs a different home. Three tiers, in order:
    recorded in that repo's `INGREDIENTS.md` as a baked-in input. Not for anything another repo would want.
 
 **Do NOT** hand-carry a generically-useful back-fill as a private `.c`/header per repo, and **do NOT**
-put a linked runtime symbol in `shared-cmake` (it holds build facilities — CMake fns + scripts — not
+put a linked runtime symbol in `shipyard` (it holds build facilities — CMake fns + scripts — not
 runtime back-fills).
 
 ## Renovate & automerge
 
-Consumer `renovate.json` is `{"$schema", "extends": ["github>ModernMavericks/shared-cmake"]}` plus
+Consumer `renovate.json` is `{"$schema", "extends": ["github>ModernMavericks/shipyard"]}` plus
 your upstream manager and rules. The shared preset provides `config:recommended` + `automerge: true`.
 
 **The `ignoreTests` policy (load-bearing):** the preset now defaults **`ignoreTests: false`** — automerge
@@ -145,7 +145,7 @@ waits for a green build. That only works if **your repo produces a CI status che
 - Give `release.yml` a `pull_request: branches: [main]` trigger (or `push: branches: ['**']`) so the
   build runs on the bump PR. This is what Renovate's automerge waits on.
 - A repo with **no build to gate** must set `ignoreTests: true` locally (opt back into blind automerge)
-  — this is the one legitimate use; shared-cmake itself does it.
+  — this is the one legitimate use; shipyard itself does it.
 - **Do not restate `ignoreTests: false` locally** — the preset sets it, and a local copy silently stops
   tracking the preset the day the preset changes. `check-family-conventions.sh` fails on it. Overriding
   with a *different* value (`true`, above) stays legal: that is a decision, not a duplicate.
@@ -231,7 +231,7 @@ never merges.
 Renovate bumps the pin → the green-gated build merges → the workflow cuts the release. Author it to fit how
 upstream publishes; if no standard datasource fits (a versioned download URL, a components file), write a
 custom regex manager + the closest datasource (`git-refs`, a `custom.regex` match) — container-tools tracks
-a `components/*/version` file this way. **GitHub Actions pins** (`uses: …@vN`, including `shared-cmake/…@v1`)
+a `components/*/version` file this way. **GitHub Actions pins** (`uses: …@vN`, including `shipyard/…@v1`)
 need no custom config: Renovate's built-in github-actions manager updates them through the same green-gate +
 patch-automerge — that's the intended auto-update for the workflow's actions.
 
@@ -442,8 +442,8 @@ Two release models — **pick by how you publish**:
 
 ## Version scaffolding (shared, wrapped)
 
-- **`version.sh`, `lib.sh`, and `release-notes-file.sh` live in shared-cmake.** A repo carries only
-  thin wrappers: `build/msc.sh` locates the installed scripts (`$MSC_SCRIPTS` → CMake user package
+- **`version.sh`, `lib.sh`, and `release-notes-file.sh` live in shipyard.** A repo carries only
+  thin wrappers: `build/msc.sh` locates the installed scripts (`$SHIPYARD_SCRIPTS` → CMake user package
   registry → sibling checkout), and `build/version.sh` / `build/release-notes-file.sh` exec the shared
   implementation. Only the product name passed to the notes builder is genuinely per-repo.
 - Wrapping rather than deleting keeps every call site working: `sh build/version.sh auto` on a dev
@@ -452,7 +452,7 @@ Two release models — **pick by how you publish**:
   from its own location (a wrapper knows its repo definitively); `lib.sh` only defaults it, since it
   may be sourced where the root is already established. Repo-specific helpers go in the repo's
   `lib.sh` *after* sourcing the shared one — never as a copy of a shared function.
-- **Install shared-cmake before computing the version** in CI: the wrapper needs `$MSC_SCRIPTS`.
+- **Install shipyard before computing the version** in CI: the wrapper needs `$SHIPYARD_SCRIPTS`.
 - If a repo's test copies `build/` into a temp dir, copy **all** of `build/*.sh`. Cherry-picking a
   named subset silently breaks a wrapper that sources `msc.sh` — it caught two repos.
 
@@ -464,7 +464,7 @@ Two release models — **pick by how you publish**:
     needs: [build]
     if: needs.build.outputs.publish == 'true'
     permissions: { contents: write }
-    uses: ModernMavericks/shared-cmake/.github/workflows/publish-release.yml@v1
+    uses: ModernMavericks/shipyard/.github/workflows/publish-release.yml@v1
     with: { version: "${{ needs.build.outputs.version }}", artifact: <artifact name> }
   ```
 - Put the assets **and** `RELEASE_NOTES.md` in that artifact. The workflow regenerates `SHA256SUMS`
@@ -501,7 +501,7 @@ toolchain and automerges. Two things to wire deliberately:
   jobs:
     repackage:
       permissions: { actions: write }   # dispatch release.yml — reusable perms can't be elevated by the callee
-      uses: ModernMavericks/shared-cmake/.github/workflows/repackage-on-ingredient-bump.yml@v1
+      uses: ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
       with: { own-upstream-paths: <path(s) meaning a NEW own upstream → N=1, excluded; omit if none> }
   ```
   The reusable workflow decides "ingredient changed and not the own upstream?" and, if so, **dispatches**
@@ -561,7 +561,7 @@ When you build from a **git clone** (not a checksummed tarball or a signed artif
 digest**, not just the tag — a git tag is mutable, so a tag-only pin trusts it not to move. Use the
 shared **`scripts/clone_pinned.sh REPO REF DIGEST DEST`** (bats-tested): it fetches the pinned source
 into a shared cache and fails closed unless the checkout is exactly `DIGEST` (moved/forced tag, MITM,
-wrong ref all bail). **Do not vendor your own `clone_pinned.sh`** — consume shared-cmake's.
+wrong ref all bail). **Do not vendor your own `clone_pinned.sh`** — consume shipyard's.
 
 Renovate keeps `REF` + `DIGEST` in sync with a `git-refs`/`currentDigest` customManager, so a bump
 updates both and the pin auto-advances. The pin file carries both, e.g. `components/foo/version`:
@@ -626,7 +626,7 @@ signal (see the auto-merge intent above — fix runtime regressions in `-maveric
 Every shipped app — **including the Sparkle updater** — must make an EXPLICIT icon decision.
 `mavericks_require_icon(TARGET t ICNS <path>)` and `mavericks_add_updater_app(… ICON <path>)` both
 FATAL at configure time if the icon is missing OR is a **registered placeholder** — its sha256 is
-listed in shared-cmake's `scripts/placeholder-icons.sha256`. The one way to ship a generic/
+listed in shipyard's `scripts/placeholder-icons.sha256`. The one way to ship a generic/
 placeholder icon is the explicit opt-in `-DMAVERICKS_ALLOW_GENERIC_ICON=ON` (or `ALLOW_GENERIC`).
 
 This gate exists because an agent-generated solid-colour stand-in once shipped in a product as if it
@@ -662,7 +662,7 @@ floor; a component package (`PackageInfo`) cannot — floors are a `productbuild
 minimum lives in the appcast instead. golang's cross product is exactly that: it TARGETS 10.9 but RUNS
 on 11.0+, so demanding 10.9.5 of it would be wrong.
 
-**Record what a variant was built FROM.** `sh "$MSC_SCRIPTS/build-info.sh" dist/build-info-<variant>.txt
+**Record what a variant was built FROM.** `sh "$SHIPYARD_SCRIPTS/build-info.sh" dist/build-info-<variant>.txt
 key=value …` at package time, and ship it as a release asset. Conformance compares any key appearing in
 more than one variant, except those that are *supposed* to differ (`variant`, `arch`, `prefix`, `pkg`,
 `identifier`).
@@ -687,7 +687,7 @@ meant to excuse.
 
 ## Family conventions (checked, not just written down)
 
-`sh "$MSC_SCRIPTS/check-family-conventions.sh"` runs in every product repo's CI and **fails the build**
+`sh "$SHIPYARD_SCRIPTS/check-family-conventions.sh"` runs in every product repo's CI and **fails the build**
 on any of these. It exists because seven repos started from one shape and drifted into two publishers,
 four concurrency policies, three repos not running their own tests, and 11 copies of one incantation —
 none of which anything detected. A convention that is not checked is a convention that drifts.
@@ -709,11 +709,11 @@ Wire it with the reusable workflow — three lines, and it never changes when a 
 ```yaml
 jobs:
   conventions:
-    uses: ModernMavericks/shared-cmake/.github/workflows/family-conventions.yml@v1
+    uses: ModernMavericks/shipyard/.github/workflows/family-conventions.yml@v1
 ```
 
-It checks out shared-cmake itself rather than expecting `$MSC_SCRIPTS`, so it also gates repos that do
-not consume shared-cmake's CMake side at all (swift-toolchain builds and mirrors — no install step, no
+It checks out shipyard itself rather than expecting `$SHIPYARD_SCRIPTS`, so it also gates repos that do
+not consume shipyard's CMake side at all (swift-toolchain builds and mirrors — no install step, no
 updater, no `.pkg`). A gate only some repos can run is not a family convention.
 
 Adding a check is cheap; adding one **without its rule here** is a trap for the next person. Land both
@@ -721,7 +721,7 @@ in the same commit.
 
 ## Running a repo's tests
 
-- **Use the shared runner: `sh "$MSC_SCRIPTS/run-repo-tests.sh" [ctest-preset]`.** It runs every
+- **Use the shared runner: `sh "$SHIPYARD_SCRIPTS/run-repo-tests.sh" [ctest-preset]`.** It runs every
   top-level `tests/*.sh` and `tests/*.bats` — or `ctest` where that is the driver — so a newly added
   test file runs the day it lands. Subdirectories are fixtures and sub-suites with their own entry
   points, not tests to run.
@@ -739,7 +739,7 @@ in the same commit.
 
 ## New-project checklist
 
-1. `renovate.json`: extend shared-cmake; add the upstream `customManager` + patch/minor rules; ensure a
+1. `renovate.json`: extend shipyard; add the upstream `customManager` + patch/minor rules; ensure a
    PR check exists (or set `ignoreTests: true` if no build). For *prompt* automerge, enable **Allow
    auto-merge** AND add **branch protection requiring the build check** — both are needed (see the
    Renovate section for the exact commands and the typo-blocks-all-merges caveat).
@@ -760,9 +760,9 @@ in the same commit.
    on: no `concurrency:`; test files nothing runs; no `INGREDIENTS.md`; a Renovate key the preset
    already sets; a release that publishes no notes body.
 8. Check in `.claude/settings.json` pointing at the `modernmavericks` marketplace (hosted in
-   `mavericks-shared-cmake`) so contributors' agents load these conventions — do NOT copy the SKILL.md:
+   `mavericks-shipyard`) so contributors' agents load these conventions — do NOT copy the SKILL.md:
    ```json
-   {"extraKnownMarketplaces": {"modernmavericks": {"source": {"source": "github", "repo": "ModernMavericks/shared-cmake"}}},
+   {"extraKnownMarketplaces": {"modernmavericks": {"source": {"source": "github", "repo": "ModernMavericks/shipyard"}}},
     "enabledPlugins": {"modernmavericks@modernmavericks": true}}
    ```
 
@@ -770,12 +770,12 @@ in the same commit.
 
 The family is mid-consolidation: each item below replaces per-repo machinery with one shared
 implementation. Detail lives in `docs/superpowers/specs/2026-07-30-family-consolidation-umbrella.md`
-in shared-cmake (that dir is gitignored, so this list is the durable half). **When you land one, strike
+in shipyard (that dir is gitignored, so this list is the durable half). **When you land one, strike
 it here.** A silently dropped increment is how the family drifted in the first place.
 
-- [x] Shared scripts dir (`$MSC_SCRIPTS`), shared test runner, conventions gate — done 2026-07-30
+- [x] Shared scripts dir (`$SHIPYARD_SCRIPTS`), shared test runner, conventions gate — done 2026-07-30
 - [x] Reusable `publish-release.yml` — done 2026-07-30; all seven repos publish through it
-- [x] Promote `version.sh` / `lib.sh` / `release-notes-file.sh` into shared-cmake — done 2026-07-30
+- [x] Promote `version.sh` / `lib.sh` / `release-notes-file.sh` into shipyard — done 2026-07-30
 - [x] One publisher — done 2026-07-30 with increment 2. The two version *models*
       (derive-from-tags vs committed `VERSION`) remain, and are a real design question, not drift
 - [x] Automerge policy stated in the preset — done 2026-07-30. **Ship-if-green**: patch, minor and
@@ -783,7 +783,7 @@ it here.** A silently dropped increment is how the family drifted in the first p
       only where a bad bump would build fine and be wrong, and the gate demands the reason
 - [ ] **North star, not yet designed:** should a product repo carry build machinery at all? One
       declarative config per repo (upstream, verification, binaries, ingredients, updater) that
-      shared-cmake turns into the build, package, release, and checks — a repo that cannot express a
+      shipyard turns into the build, package, release, and checks — a repo that cannot express a
       difference cannot drift into one. The hard part is where genuine difference lives
       (container-tools has no single upstream; swift-toolchain ships no end-user `.pkg`)
 
@@ -798,4 +798,4 @@ it here.** A silently dropped increment is how the family drifted in the first p
 - Adding a PR trigger without the `rel=no unless main` guard → a PR build tries to publish.
 - Committing `VERSION`, or building assuming it exists → it's gitignored/workflow-written.
 - Reaching for a PAT to create the release tag → `gh release create` mints it under `GITHUB_TOKEN`.
-- Vendoring shared-cmake or pinning its action to a SHA → consume `@v1` via the install action.
+- Vendoring shipyard or pinning its action to a SHA → consume `@v1` via the install action.

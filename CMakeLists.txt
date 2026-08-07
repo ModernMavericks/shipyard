@@ -9,11 +9,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 else()
   file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/UPSTREAM_VERSION" _MSC_VERSION LIMIT_COUNT 1)
 endif()
-project(MavericksSharedCMake VERSION ${_MSC_VERSION} LANGUAGES NONE)
+project(MavericksShipyard VERSION ${_MSC_VERSION} LANGUAGES NONE)
 
 # This project ships CMake modules + helper scripts (no compiled artifacts). It
 # installs itself as a find_package() config package so consumers can just:
-#   find_package(MavericksSharedCMake REQUIRED)
+#   find_package(MavericksShipyard REQUIRED)
 #   include(Mavericks)
 # instead of vendoring a submodule. Install to a prefix your cmake searches
 # (e.g. a pkgsrc package -> /opt/pkg), or pass -DCMAKE_PREFIX_PATH=<prefix>.
@@ -21,10 +21,10 @@ project(MavericksSharedCMake VERSION ${_MSC_VERSION} LANGUAGES NONE)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-set(_dest "${CMAKE_INSTALL_DATADIR}/cmake/MavericksSharedCMake")
+set(_dest "${CMAKE_INSTALL_DATADIR}/cmake/MavericksShipyard")
 
 install(FILES
-  MavericksSharedCMakeConfig.cmake
+  MavericksShipyardConfig.cmake
   Mavericks.cmake
   MavericksMode.cmake
   RequireAppleClang.cmake
@@ -43,24 +43,24 @@ install(DIRECTORY scripts DESTINATION "${_dest}" USE_SOURCE_PERMISSIONS)
 install(DIRECTORY updater DESTINATION "${_dest}")
 
 write_basic_package_version_file(
-  "${CMAKE_CURRENT_BINARY_DIR}/MavericksSharedCMakeConfigVersion.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/MavericksShipyardConfigVersion.cmake"
   VERSION "${PROJECT_VERSION}"
   COMPATIBILITY SameMajorVersion)
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/MavericksSharedCMakeConfigVersion.cmake"
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/MavericksShipyardConfigVersion.cmake"
   DESTINATION "${_dest}")
 
 # Self-register in the per-user CMake package registry so consumers find this
-# with a bare `find_package(MavericksSharedCMake)` -- no CMAKE_PREFIX_PATH, no
+# with a bare `find_package(MavericksShipyard)` -- no CMAKE_PREFIX_PATH, no
 # submodule, wherever you chose to --prefix install it. find_package consults
 # ~/.cmake/packages/<Name>/ by default. Set MAVERICKS_NO_USER_REGISTRY to skip
 # (e.g. a system/CI install that shouldn't touch $HOME).
 option(MAVERICKS_NO_USER_REGISTRY "Do not register in the user package registry" OFF)
 if(NOT MAVERICKS_NO_USER_REGISTRY)
   install(CODE "
-    set(_reg \"\$ENV{HOME}/.cmake/packages/MavericksSharedCMake\")
+    set(_reg \"\$ENV{HOME}/.cmake/packages/MavericksShipyard\")
     file(MAKE_DIRECTORY \"\${_reg}\")
-    file(WRITE \"\${_reg}/mavericks-shared-cmake\" \"\${CMAKE_INSTALL_PREFIX}/${_dest}\")
-    message(STATUS \"Registered MavericksSharedCMake -> \${CMAKE_INSTALL_PREFIX}/${_dest} (user package registry)\")
+    file(WRITE \"\${_reg}/mavericks-shipyard\" \"\${CMAKE_INSTALL_PREFIX}/${_dest}\")
+    message(STATUS \"Registered MavericksShipyard -> \${CMAKE_INSTALL_PREFIX}/${_dest} (user package registry)\")
   ")
 endif()
 

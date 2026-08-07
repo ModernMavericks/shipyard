@@ -26,7 +26,7 @@ on:
     paths: ['components/**']
 jobs:
   repackage:
-    uses: ModernMavericks/shared-cmake/.github/workflows/repackage-on-ingredient-bump.yml@v1
+    uses: ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
     with:
       own-upstream-paths: components/tailscale/version
 YML
@@ -43,7 +43,7 @@ on:
       - UPSTREAM_VERSION   # deliberately listed to prove exclusion works
 jobs:
   repackage:
-    uses: ModernMavericks/shared-cmake/.github/workflows/repackage-on-ingredient-bump.yml@v1
+    uses: ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
     with:
       own-upstream-paths: UPSTREAM_VERSION
 YML

@@ -8,7 +8,7 @@
 #   scripts/stage_updater.sh     -- stage the updater .app + LaunchAgent into a pkg payload,
 #                                   rendering updater/{updatecheck.plist,postinstall}.in per product
 #   scripts/sign_and_appcast.sh  -- sign a .pkg (via ed25519-sign) then emit appcast.xml (gen_appcast.sh)
-set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shared-cmake root")
+set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shipyard root")
 include("${MAVERICKS_SHARED_DIR}/MavericksDecisions.cmake")   # mavericks_reject_placeholder_icon()
 
 function(mavericks_fetch_sparkle out_var)

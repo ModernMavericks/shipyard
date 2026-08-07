@@ -1,6 +1,6 @@
 # MavericksFetch.cmake -- defines mavericks_fetch_sdk(). No side effects, so a
 # consumer can include just this module without the compiler gate / mode check.
-set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shared-cmake root")
+set(MAVERICKS_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "mavericks-shipyard root")
 
 # mavericks_fetch_sdk(<out_var>): fetch+cache+verify the pinned MacOSX10.9 SDK
 # (cross builds only) and return its root in out_var. Native builds use the system SDK.

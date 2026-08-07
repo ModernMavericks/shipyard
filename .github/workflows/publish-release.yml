@@ -37,8 +37,8 @@ on:
         type: boolean
         required: false
         default: true
-      shared-cmake-ref:
-        description: "shared-cmake ref to take release-assets.sh from."
+      shipyard-ref:
+        description: "shipyard ref to take release-assets.sh from."
         type: string
         required: false
         default: v1
@@ -49,12 +49,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check out shared-cmake (for release-assets.sh)
+      - name: Check out shipyard (for release-assets.sh)
         uses: actions/checkout@v7
         with:
-          repository: ModernMavericks/shared-cmake
-          ref: ${{ inputs.shared-cmake-ref }}
-          path: .shared-cmake
+          repository: ModernMavericks/shipyard
+          ref: ${{ inputs.shipyard-ref }}
+          path: .shipyard
 
       - uses: actions/download-artifact@v8
         with:
@@ -70,7 +70,7 @@ jobs:
           set -eu
           # Fails loudly when the notes are missing or empty -- publishing is where the notes promise
           # is kept, so an empty body stops the release rather than shipping quietly.
-          files="$(sh .shared-cmake/scripts/release-assets.sh dist "$NOTES")"
+          files="$(sh .shipyard/scripts/release-assets.sh dist "$NOTES")"
           if [ "$CHECKSUMS" = true ]; then
             ( cd dist && printf '%s\n' "$files" | sed 's|^dist/||' | xargs shasum -a 256 > SHA256SUMS )
             # Verify what we just wrote. Generating a checksum file and publishing it unread means the

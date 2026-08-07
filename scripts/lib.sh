@@ -13,18 +13,18 @@ upstream_version() {
   tr -d '[:space:]' < "${MAVERICKS_UPSTREAM_FILE:-$MAVERICKS_ROOT/UPSTREAM_VERSION}"
 }
 
-# Absolute path to the INSTALLED mavericks-shared-cmake scripts dir. $MSC_SCRIPTS when install@v1
+# Absolute path to the INSTALLED mavericks-shipyard scripts dir. $SHIPYARD_SCRIPTS when install@v1
 # exported it (CI), else the CMake user package registry -- what find_package consults -- never a
 # hard-coded prefix and never a vendored copy. Override with MAVERICKS_SCRIPTS for tests.
 msc_scripts() {
   if [ -n "${MAVERICKS_SCRIPTS:-}" ]; then printf '%s\n' "$MAVERICKS_SCRIPTS"; return 0; fi
-  if [ -n "${MSC_SCRIPTS:-}" ] && [ -d "$MSC_SCRIPTS" ]; then printf '%s\n' "$MSC_SCRIPTS"; return 0; fi
-  reg=$(ls "$HOME/.cmake/packages/MavericksSharedCMake/"* 2>/dev/null | head -1)
+  if [ -n "${SHIPYARD_SCRIPTS:-}" ] && [ -d "$SHIPYARD_SCRIPTS" ]; then printf '%s\n' "$SHIPYARD_SCRIPTS"; return 0; fi
+  reg=$(ls "$HOME/.cmake/packages/MavericksShipyard/"* 2>/dev/null | head -1)
   if [ -n "$reg" ]; then
     d=$(cat "$reg")
     if [ -d "$d/scripts" ]; then printf '%s\n' "$d/scripts"; return 0; fi
   fi
-  echo "msc_scripts: cannot locate installed mavericks-shared-cmake scripts" >&2
+  echo "msc_scripts: cannot locate installed mavericks-shipyard scripts" >&2
   echo "  install it (README 'Install (once)') or set MAVERICKS_SCRIPTS" >&2
   return 1
 }

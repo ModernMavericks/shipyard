@@ -30,7 +30,7 @@ else
 fi
 
 # Append which ingredients moved. Its siblings ship alongside this script, so unlike the per-repo
-# copies there is no "the installed shared-cmake is stale" path to warn about. Still tolerant:
+# copies there is no "the installed shipyard is stale" path to warn about. Still tolerant:
 # prose must never fail a release.
 PREV="$(cd "$MAVERICKS_ROOT" && sh "$SELF/previous-release-tag.sh" "$TAG" 2>/dev/null || true)"
 PINS="$(cd "$MAVERICKS_ROOT" && sh "$SELF/ingredient-pins.sh" 2>/dev/null || true)"

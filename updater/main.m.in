@@ -1,4 +1,4 @@
-// Shared Sparkle 1.27 updater host (mavericks-shared-cmake template; configured per product via @MAVERICKS_*@).
+// Shared Sparkle 1.27 updater host (mavericks-shipyard template; configured per product via @MAVERICKS_*@).
 // A tiny normal ObjC/ARC app that runs an on-demand or scheduled (--background) update check. Two
 // background-found-update modes (see MAVERICKS_PANE_HINT_KEY): pane-hint (a host UI surfaces it) or user
 // notification (no pane; click -> foreground install).

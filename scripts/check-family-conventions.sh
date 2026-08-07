@@ -3,7 +3,7 @@
 # that drifts -- seven repos started from one shape and diverged into two publishers, four concurrency
 # policies, three repos not running their own tests, and 11 copies of one shell incantation.
 #
-# Fails loudly and names the fix. A repo with no release.yml (shared-cmake itself) has nothing to check.
+# Fails loudly and names the fix. A repo with no release.yml (shipyard itself) has nothing to check.
 #   usage: check-family-conventions.sh
 set -eu
 REL=".github/workflows/release.yml"
@@ -39,7 +39,7 @@ fi
 if [ -d tests ] && [ -n "$(ls tests/*.sh tests/*.bats 2>/dev/null || true)" ]; then
   ci_mentions 'run-repo-tests' || ci_mentions 'ctest' \
     || fail "tests/ has test files but no workflow runs them" \
-            "add: sh \"\$MSC_SCRIPTS/run-repo-tests.sh\"   (or ctest, where that is the driver)"
+            "add: sh \"\$SHIPYARD_SCRIPTS/run-repo-tests.sh\"   (or ctest, where that is the driver)"
 fi
 
 # 3. Every product bakes in inputs; say what they are and how each is tracked.
