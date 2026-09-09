@@ -27,26 +27,37 @@ grep -q '^concurrency:' "$REL" \
   || fail "$REL declares no concurrency: — two publishes can race the same tag" \
           "add a concurrency: block with cancel-in-progress: false"
 
-# 1b. ...and the group must DISTINGUISH publishing runs from build feedback. `cancel-in-progress:
-# false` protects the run that is EXECUTING, not one that is QUEUED: GitHub keeps only the newest
-# pending run in a group and cancels the rest. With one group for every event, a queued dispatch is
-# evicted by the next arrival, its tag is never minted, and nothing goes red -- the release simply
-# does not exist. Observed 2026-09-09 in mavericks-golang, where 13 seconds separated the two.
+# 1b. ...and it must put a run that CAN PUBLISH alone in its group, cancellable by nothing.
 #
-# Only a pull_request supersedes, keyed per ref so a force-push replaces its own predecessor. Every
-# other event -- a branch push, a *-mavericks.* tag, a workflow_dispatch -- is keyed per RUN and so is
-# alone in its group: never queued, never evicted, never cancelled. Branch pushes are on that side
-# because in 8 of 13 product repos a push to main can publish, and concurrency is resolved at queue
-# time, before the ver step decides: cancelling the run would cancel the publish job with it.
+# `cancel-in-progress: false` is not that guarantee and never was: it protects the run that is
+# EXECUTING, not one that is QUEUED. GitHub keeps only the newest pending run in a group and cancels
+# the rest. So the shape this family ran until 2026-09-09 -- every dispatch herded into one shared
+# literal group, sold as a version-bump lock -- discarded releases silently: the tag is never minted,
+# nothing goes red, the release simply does not exist. Observed in mavericks-golang, 13 seconds
+# between the two runs, and reproduced on demand with a throwaway probe: two same-SHA dispatches
+# merely queue, and the THIRD cancels the queued second.
 #
-# This replaces the old serialization lock; two dispatches can now compute the same -mavericks.(N+1),
-# and publish-release.yml's "Refuse an already-taken tag" step is what catches it.
-if awk '/^concurrency:/{f=1;next} /^[^[:space:]#]/{f=0} f' "$REL" | grep -q 'github\.event_name'; then
-  :
-else
-  fail "$REL uses ONE concurrency group for every event — a queued publish is evicted by the next run and its release silently never happens" \
-       "key the group on the event: group: release-\${{ github.event_name == 'pull_request' && github.ref || github.run_id }} with cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
-fi
+# Hence two demands, not one. The GROUP must be keyed on github.run_id, so a publishing run is alone
+# in it -- never queued behind a sibling, so never evictable. And CANCEL-IN-PROGRESS must be the
+# pull_request test, so the only thing that ever supersedes is PR feedback, where a force-push
+# replacing its predecessor is exactly what you want.
+#
+# Branch pushes sit on the never-cancelled side too, because in eight of the thirteen product repos a
+# push to main can auto-cut a release, and concurrency is resolved when a run is QUEUED -- before the
+# ver step decides whether this one publishes -- so cancelling the run would cancel the publish job
+# with it. This replaces the old lock; two dispatches can now compute the same -mavericks.(N+1), and
+# publish-release.yml's "Refuse an already-taken tag" step is what catches it.
+CONC="$(awk '/^concurrency:/{f=1;next} /^[^[:space:]#]/{f=0} f' "$REL")"
+GROUP="$(printf '%s\n' "$CONC" | awk '/^[[:space:]]*group:/{f=1;print;next} /^[[:space:]]*cancel-in-progress:/{f=0} f')"
+CANCEL="$(printf '%s\n' "$CONC" | awk '/^[[:space:]]*cancel-in-progress:/{f=1;print;next} /^[[:space:]]*group:/{f=0} f')"
+
+printf '%s\n' "$GROUP" | grep -q 'github\.run_id' \
+  || fail "$REL concurrency group is shared between runs that can publish — a queued one is evicted by the next arrival and its release silently never happens" \
+          "key the group per run: group: release-\${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+
+printf '%s\n' "$CANCEL" | grep -q 'pull_request' \
+  || fail "$REL can cancel a run that publishes — cancel-in-progress must name pull_request, the only event that may supersede" \
+          "cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
 
 # 2. Tests that exist must run. Hand-enumeration is how they stop running.
 if [ -d tests ] && [ -n "$(ls tests/*.sh tests/*.bats 2>/dev/null || true)" ]; then

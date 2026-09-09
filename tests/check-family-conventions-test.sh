@@ -75,6 +75,35 @@ open(p,'w').write(s)
 PY
 (cd "$work/cok" && sh "$S" >/dev/null) || { echo "FAIL: the shipped concurrency block should pass"; exit 1; }
 
+# ...and so must the shape this family actually ran until 2026-09-09: dispatches herded into one
+# shared literal group with cancel-in-progress:false. It mentions github.event_name, so a check that
+# only asks "does the group distinguish events?" waves it straight through -- yet it is the exact
+# arrangement that evicted a queued run in mavericks-golang. The gate has to reject it by name.
+mkrepo "$work/cold"
+python3 - "$work/cold/.github/workflows/release.yml" <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read()
+s=s.replace("  group: release-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}",
+            "  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && 'local_release' || github.ref }}")
+s=s.replace("  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+            "  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}")
+open(p,'w').write(s)
+PY
+if (cd "$work/cold" && sh "$S" >/dev/null 2>&1); then echo "FAIL: the old shared-dispatch-group shape should fail"; exit 1; fi
+(cd "$work/cold" && sh "$S" 2>&1 | grep -qiE 'run_id|per run|alone') || { echo "FAIL: should say publishing runs must be keyed per run"; exit 1; }
+
+# A group that IS per-run but still lets a publish be cancelled is only half the rule.
+mkrepo "$work/chalf"
+python3 - "$work/chalf/.github/workflows/release.yml" <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read()
+s=s.replace("  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+            "  cancel-in-progress: true")
+open(p,'w').write(s)
+PY
+if (cd "$work/chalf" && sh "$S" >/dev/null 2>&1); then echo "FAIL: a cancellable publish should fail"; exit 1; fi
+(cd "$work/chalf" && sh "$S" 2>&1 | grep -qi 'pull_request') || { echo "FAIL: should say only a pull_request may be cancelled"; exit 1; }
+
 # 2. tests exist but CI never runs them
 mkrepo "$work/t"; grep -v 'run-repo-tests' "$work/ok/.github/workflows/release.yml" > "$work/t/.github/workflows/release.yml"
 if (cd "$work/t" && sh "$S" >/dev/null 2>&1); then echo "FAIL unrun tests should fail"; exit 1; fi

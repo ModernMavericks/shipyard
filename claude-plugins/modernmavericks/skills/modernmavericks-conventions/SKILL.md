@@ -516,8 +516,10 @@ its `main` — in the left column, that push is a release.
   long before the `ver` step decides whether this one releases, so "cancel the build but not the publish"
   is not expressible — cancelling the run cancels the publish job with it. Worst case that leaves a
   half-uploaded release whose tag is already taken, which the publish guard then refuses to re-cut. Paying
-  for every main build is the cheaper mistake. `check-family-conventions.sh` check 1b enforces that the
-  group distinguishes events at all.
+  for every main build is the cheaper mistake. `check-family-conventions.sh` check 1b enforces both
+  halves: the group must be keyed on `github.run_id`, and `cancel-in-progress` must name
+  `pull_request`. Either one alone lets the old shape back in — it mentions `github.event_name`, so a
+  gate that only asks "does the group distinguish events?" waves it straight through.
 - Sign/appcast and publish steps gate on `steps.ver.outputs.release == 'yes'`. Fork PRs never touch
   `SPARKLE_PRIVATE_KEY` (they resolve `release=no`).
 - Runner `macos-26` (fallback `macos-15`); `actions/*@v7` on new repos.
