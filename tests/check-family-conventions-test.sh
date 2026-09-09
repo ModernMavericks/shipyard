@@ -221,6 +221,48 @@ JSON
 (cd "$work/v6" && git add -A) >/dev/null 2>&1
 (cd "$work/v6" && sh "$S" >/dev/null) || { echo "FAIL per-line upstream should pass"; exit 1; }
 
+# 7d. The mirror of 7c: a build OUTPUT dir that is NOT ignored. tailscale's release.yml configures the
+# updater with `cmake -S updater -B build/updater`, a path the shared presets never name -- so nothing
+# tied it to .gitignore, and 7.4MB of CMake output sat in the checkout untracked AND unignored, one
+# `git add -A` from being committed. The gate finds the paths the repo itself names rather than
+# demanding one blessed spelling: ten of fifteen repos spell their ignores differently and all are fine.
+mkrepo "$work/bo"
+cat >> "$work/bo/.github/workflows/release.yml" <<'YML'
+      - run: cmake -S updater -B build/updater
+YML
+if (cd "$work/bo" && sh "$S" >/dev/null 2>&1); then echo "FAIL: an unignored build output dir should fail"; exit 1; fi
+(cd "$work/bo" && sh "$S" 2>&1 | grep -q 'build/updater') || { echo "FAIL: should name the unignored path"; exit 1; }
+
+# ...ignored, it passes. Any spelling that actually covers the path is fine.
+mkrepo "$work/bok"
+cat >> "$work/bok/.github/workflows/release.yml" <<'YML'
+      - run: cmake -S updater -B build/updater
+YML
+printf 'build/updater/\n' >> "$work/bok/.gitignore"
+(cd "$work/bok" && git add -A >/dev/null 2>&1; sh "$S" >/dev/null) || { echo "FAIL: an ignored build output dir should pass"; exit 1; }
+
+# A build that already leaves the tree needs no ignore at all -- that is the point of leaving it.
+mkrepo "$work/boo"
+cat >> "$work/boo/.github/workflows/release.yml" <<'YML'
+      - run: cmake -S . -B "$RUNNER_TEMP/b"
+      - run: cmake -S . -B /tmp/build
+YML
+(cd "$work/boo" && git add -A >/dev/null 2>&1; sh "$S" >/dev/null) || { echo "FAIL: an out-of-tree build dir needs no ignore"; exit 1; }
+
+# `grep -B 3` is not a build directory. The gate reads only cmake's -B, or it invents failures.
+mkrepo "$work/bgrep"
+cat >> "$work/bgrep/.github/workflows/release.yml" <<'YML'
+      - run: grep -B 3 pattern file
+YML
+(cd "$work/bgrep" && git add -A >/dev/null 2>&1; sh "$S" >/dev/null) || { echo "FAIL: grep -B must not be read as a build dir"; exit 1; }
+
+# A committed CMakePresets.json names binaryDirs too; those are build output just the same.
+mkrepo "$work/bpre"
+printf '{"version":6,"configurePresets":[{"name":"n","binaryDir":"${sourceDir}/build-native"}]}\n' \
+  > "$work/bpre/CMakePresets.json"
+if (cd "$work/bpre" && git add -A >/dev/null 2>&1; sh "$S" >/dev/null 2>&1); then echo "FAIL: an unignored preset binaryDir should fail"; exit 1; fi
+(cd "$work/bpre" && sh "$S" 2>&1 | grep -q 'build-native') || { echo "FAIL: should name the preset binaryDir"; exit 1; }
+
 # 8. Workflow YAML must parse with DUPLICATE KEYS REJECTED. A second `with:` on one step is valid
 # YAML (last key wins) and ordinary parsers accept it, but GitHub refuses to run the workflow: the run
 # shows up named after the file path, "likely failed because of a workflow file issue", with no step

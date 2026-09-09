@@ -224,6 +224,53 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   fi
 fi
 
+# 7d. The mirror of 7c: a build OUTPUT dir that is NOT ignored. tailscale configured the Sparkle
+# updater with `cmake -S updater -B build/updater` -- a path the shared presets do not name -- so
+# nothing connected it to .gitignore, and 7.4MB of CMake output sat in the checkout untracked AND
+# unignored, one `git add -A` from being committed. Its CMakeCache.txt was still resolving
+# MavericksSharedCMake_DIR months after the rename, which is what a stale cache does: it keeps working
+# against a package that no longer exists under that name, until it doesn't.
+#
+# The family will not agree on one spelling and does not need to -- ten of the fifteen repos write
+# their ignores differently and every one of them is correct for its own layout. So ask the REPO where
+# it writes: every `cmake ... -B <dir>` in its workflows and committed shell, plus every binaryDir a
+# committed CMakePresets.json names. A path that already leaves the tree (absolute, or built from a
+# variable like $RUNNER_TEMP) needs no ignore -- that is the point of leaving.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  # cmake's -B specifically: a bare -B also means "lines of context" to grep, and reading that as a
+  # build directory would invent failures out of `grep -B 3`.
+  # Every stage here has to be failure-tolerant: this runs under `set -e`, and a grep that simply
+  # finds nothing exits 1. As the LAST command of a command substitution that would fail the
+  # assignment and kill the whole gate with no output at all -- which is exactly what it did on the
+  # first draft. Hence the `|| true` and the trailing `:`.
+  bdirs="$(
+    {
+      [ -n "$CI_FILES" ] && cat $CI_FILES 2>/dev/null
+      find . -name '*.sh' -not -path './.git/*' -exec cat {} + 2>/dev/null
+      :
+    } | grep -oE 'cmake[^;|&]*-B[[:space:]]*[^[:space:];|&)]+' \
+      | sed -e 's/.*-B[[:space:]]*//' -e 's/^["'"'"']//' -e 's/["'"'"']$//' || true
+    if [ -f CMakePresets.json ]; then
+      sed -n 's/.*"binaryDir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' CMakePresets.json
+    fi
+    :
+  )"
+  for d in $bdirs; do
+    d="${d#\$\{sourceDir\}/}"          # presets say ${sourceDir}/build-native; we ask about build-native
+    d="${d%/}"
+    case "$d" in
+      ''|/*|~*|*'$'*|*..*) continue ;; # out of tree, or a path we cannot resolve: not ours to demand
+    esac
+    # Ask about "$d/", not "$d". A .gitignore pattern written `build/updater/` matches a DIRECTORY,
+    # and git can only tell a nonexistent path is one if the query says so. Build output is exactly
+    # the thing that does not exist in a fresh checkout, so querying without the slash would have
+    # failed every correctly-ignored repo the moment this ran in CI.
+    git check-ignore -q "$d/" 2>/dev/null && continue
+    fail "$d is a build output directory this repo writes, but .gitignore does not cover it — one \`git add -A\` commits the build tree, and a stale CMakeCache keeps resolving a package that has been renamed away" \
+         "add $d/ to .gitignore (any pattern that covers it; the family does not share one spelling)"
+  done
+fi
+
 # 8. Every workflow must PARSE, with duplicate keys rejected. A second `with:` on one step is legal
 # YAML -- last key wins, and every ordinary parser accepts it -- but GitHub refuses to run the
 # workflow: the run appears named after the file path, "likely failed because of a workflow file
