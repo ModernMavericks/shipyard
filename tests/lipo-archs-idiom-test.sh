@@ -21,14 +21,14 @@ case "$idiom" in
   *) echo "FAIL: -info idiom gave '$idiom', which names no architecture"; exit 1 ;;
 esac
 
-if lipo -archs "$bin" >/dev/null 2>&1; then
-  archs="$(lipo -archs "$bin" 2>/dev/null)"
+if lipo -archs "$bin" >/dev/null 2>&1; then   # portability-ok: this test exists to compare against -archs where it exists
+  archs="$(lipo -archs "$bin" 2>/dev/null)"   # portability-ok: this test exists to compare against -archs where it exists
   # Compare as SETS: -info separates with spaces and can leave a trailing one, -archs need not agree
   # on order or padding, and neither promises a stable sequence.
   norm() { tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' '; }
   a="$(printf '%s' "$idiom" | norm)"; b="$(printf '%s' "$archs" | norm)"
-  [ "$a" = "$b" ] || { echo "FAIL: idiom '$a' != lipo -archs '$b'"; exit 1; }
+  [ "$a" = "$b" ] || { echo "FAIL: idiom '$a' != lipo -archs '$b'"; exit 1; }   # portability-ok: this test exists to compare against -archs where it exists
   echo "PASS: lipo-archs-idiom (-archs present; idiom matches: $a)"
 else
-  echo "PASS: lipo-archs-idiom (no -archs here, as on 10.9; idiom yields: $idiom)"
+  echo "PASS: lipo-archs-idiom (no -archs here, as on 10.9; idiom yields: $idiom)"   # portability-ok: this test exists to compare against -archs where it exists
 fi
