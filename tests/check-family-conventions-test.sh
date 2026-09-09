@@ -158,9 +158,18 @@ mkdir -p "$work/v5/build"; printf '#!/bin/sh\n: > UPSTREAM_VERSION\n' > "$work/v
 (cd "$work/v5" && git add -A) >/dev/null 2>&1
 (cd "$work/v5" && sh "$S" >/dev/null) || { echo "FAIL derived upstream should pass"; exit 1; }
 
-# parallel upstream lines (golang) keep one UPSTREAM_VERSION per line
+# parallel upstream lines (golang) keep one UPSTREAM_VERSION per line. Check 7b additionally demands
+# each line carry its OWN capped Renovate manager, so the fixture has to look like golang really does
+# -- an anchored managerFilePatterns plus an allowedVersions cap keeping the line off the next minor.
 mkrepo "$work/v6"; rm "$work/v6/UPSTREAM_VERSION"
 mkdir -p "$work/v6/lines/126"; printf '1.26.5\n' > "$work/v6/lines/126/UPSTREAM_VERSION"
+cat > "$work/v6/.github/renovate.json" <<'JSON'
+{"extends":["github>ModernMavericks/shipyard"],
+ "customManagers":[{"customType":"regex","managerFilePatterns":["/^lines/126/UPSTREAM_VERSION$/"],
+                    "matchStrings":["^(?<currentValue>.+?)\\s*$"],"depNameTemplate":"go-126",
+                    "packageNameTemplate":"go","datasourceTemplate":"golang-version"}],
+ "packageRules":[{"matchDepNames":["go-126"],"allowedVersions":"<1.27"}]}
+JSON
 (cd "$work/v6" && git add -A) >/dev/null 2>&1
 (cd "$work/v6" && sh "$S" >/dev/null) || { echo "FAIL per-line upstream should pass"; exit 1; }
 
