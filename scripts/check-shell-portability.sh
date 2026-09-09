@@ -15,8 +15,11 @@
 # before any scan: a lint whose pattern quietly stopped matching is green forever AND stops anyone
 # from looking, which is strictly worse than no lint.
 #
-# Scans the repo's git-TRACKED *.sh (so vendored or fetched upstream trees, which we do not get to
-# rewrite, are out of scope), or exactly the files named on the command line.
+# Scans the repo's git-TRACKED *.sh and *.bats (so vendored or fetched upstream trees, which we do
+# not get to rewrite, are out of scope), or exactly the files named on the command line. .bats counts
+# because it IS shell: the first cut of this lint checked only *.sh and therefore reported ed25519
+# clean while tests/version.bats died on a bare `mktemp -d` in its setup() -- a green lint sitting
+# next to the exact bug it exists to catch.
 #   usage: check-shell-portability.sh [file ...]
 set -eu
 
@@ -44,7 +47,7 @@ done < "$rulesfile"
 if [ "$#" -gt 0 ]; then
   files="$*"
 elif git rev-parse --git-dir >/dev/null 2>&1; then
-  files="$(git ls-files '*.sh' 2>/dev/null || true)"
+  files="$(git ls-files '*.sh' '*.bats' 2>/dev/null || true)"
 else
   echo "check-shell-portability: not a git checkout and no files named -- nothing scanned" >&2
   echo "    fix: run it in the repo, or pass the files to scan" >&2

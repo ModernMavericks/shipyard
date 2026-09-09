@@ -45,6 +45,15 @@ printf '#!/bin/sh\n# never use sort -V here; and not $(mktemp -d) either\necho o
 (cd "$work/c" && git add -A) >/dev/null 2>&1
 (cd "$work/c" && sh "$S" >/dev/null) || { echo "FAIL full-line comments should not trip the lint"; exit 1; }
 
+# .bats files are shell too, and the first cut of this lint scanned only *.sh -- so it called
+# ed25519 clean while tests/version.bats was dying on a bare mktemp in setup(). Assert the coverage.
+mkrepo "$work/b"
+printf '#!/bin/sh\necho ok\n' > "$work/b/a.sh"
+printf 'setup() {\n  TMP="$(mktemp -d)"\n}\n' > "$work/b/tests.bats"  # portability-ok: a lint fixture must contain the violation
+(cd "$work/b" && git add -A) >/dev/null 2>&1
+if out="$(cd "$work/b" && sh "$S" 2>&1)"; then echo "FAIL a .bats violation should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'tests.bats:2' || { echo "FAIL should name the .bats file:line: $out"; exit 1; }
+
 # UNTRACKED files are out of scope: vendored/fetched upstream trees are not ours to rewrite
 mkrepo "$work/u"
 printf '#!/bin/sh\necho ok\n' > "$work/u/a.sh"
