@@ -30,6 +30,21 @@ jobs:
       - name: Install mavericks-shipyard (self)
         uses: ./.github/actions/install
 
+      # The workflow-parse gate (check-family-conventions.sh check 8) needs PyYAML, and the macOS
+      # runner's python3 has none -- which is what reddened every run here for a month. It is
+      # provisioned in THIS job rather than in .github/actions/install because the need is local to
+      # shipyard: consumers reach that gate through family-conventions.yml, which runs on
+      # ubuntu-latest, whose python3 already has PyYAML. Putting it in the install action would have
+      # run a pip install in all seven consumers' release jobs to fix a problem none of them have.
+      # setup-python (not the system python3) so pip is not PEP 668 externally-managed; safe here
+      # because this job is ours -- inside the composite install action it would have prepended a
+      # Python to PATH for every later step in a CONSUMER's job.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Provision PyYAML (the workflow-parse gate's only dependency)
+        run: python3 -m pip install --quiet pyyaml && python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
+
       - name: ctest (parameterized suites)
         run: |
           cmake -S . -B build

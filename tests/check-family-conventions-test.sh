@@ -189,6 +189,21 @@ printf 'name: x\non: [push]\njobs:\n  a:\n   steps:\n  - bad indent\n' > "$work/
 if out="$(cd "$work/y2" && sh "$S" 2>&1)"; then echo "FAIL broken yaml should fail"; exit 1; fi
 printf '%s\n' "$out" | grep -q 'broken.yml' || { echo "FAIL should name the file: $out"; exit 1; }
 
+# ...and when PyYAML itself is missing, the gate must NAME the absent dependency rather than dump a
+# ModuleNotFoundError traceback at a repo that is fully compliant. GitHub's macOS runner python3 ships
+# without PyYAML, so this reported a bare "FAIL compliant repo should pass" on every CI run for a
+# month, pointing at the repo instead of at the one `pip install` that fixes it.
+mkrepo "$work/y3"
+noyaml="$work/noyaml"; mkdir -p "$noyaml"
+printf 'raise ImportError("No module named yaml")\n' > "$noyaml/yaml.py"
+if out="$(cd "$work/y3" && PYTHONPATH="$noyaml" sh "$S" 2>&1)"; then
+  echo "FAIL missing PyYAML should fail (cannot-verify is not a pass)"; exit 1
+fi
+printf '%s\n' "$out" | grep -qi 'PyYAML' || { echo "FAIL should name PyYAML: $out"; exit 1; }
+if printf '%s\n' "$out" | grep -qi 'Traceback'; then
+  echo "FAIL should not dump a traceback: $out"; exit 1
+fi
+
 # 9. Every build ingredient must be able to auto-update. An ingredient nobody tracks is one that
 # silently goes stale: swift-runtime's swift-toolchain pin sat at 6.3.3-mavericks.1 while that repo
 # shipped .3, because updating it meant a human fetching and pasting two SHA256s. Wiring a Renovate

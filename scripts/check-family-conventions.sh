@@ -205,6 +205,17 @@ fi
 # workflow: the run appears named after the file path, "likely failed because of a workflow file
 # issue", with no step logs to read. Nothing else in CI can catch this, because CI never starts.
 if [ -n "$CI_FILES" ] && command -v python3 >/dev/null 2>&1; then
+  # PyYAML is the checker's OWN dependency, and GitHub's macOS runner python3 ships without it.
+  # Probe first: otherwise the parse below dies on `import yaml` and reports a bare
+  # ModuleNotFoundError traceback against a repo that is perfectly compliant -- which is how this
+  # gate red-lit every run for a month without once naming what to install. Cannot-verify still
+  # FAILS, the same rule as the per-line Renovate check above: a gate that passes when it did not
+  # run is the rot it exists to prevent. shipyard's install action provisions PyYAML, so CI never
+  # lands here.
+  if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    fail "python3 has no PyYAML — cannot verify that the workflows parse, so a duplicate key would ship unseen" \
+         "install it (python3 -m pip install pyyaml); shipyard's .github/actions/install does this for CI"
+  else
   # shellcheck disable=SC2086  # deliberate word-split list of paths
   python3 - $CI_FILES <<'PYEOF' || status=1
 import sys, yaml
@@ -234,6 +245,7 @@ for path in sys.argv[1:]:
         rc = 1
 sys.exit(rc)
 PYEOF
+  fi
 fi
 
 # 9. Every build ingredient must be able to AUTO-UPDATE. An ingredient nobody tracks goes stale
