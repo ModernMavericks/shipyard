@@ -3,7 +3,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/check-family-conventions.sh"
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d "${TMPDIR:-/tmp}/family-conventions.XXXXXX")"; trap 'rm -rf "$work"' EXIT  # template: 10.9 BSD mktemp requires one
 
 mkrepo() {  # $1 = dir
   mkdir -p "$1/.github/workflows" "$1/tests"

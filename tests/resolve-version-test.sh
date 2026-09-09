@@ -8,7 +8,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/resolve-version.sh"
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d "${TMPDIR:-/tmp}/resolve-version-test.XXXXXX")"; trap 'rm -rf "$work"' EXIT
 
 new_repo() {  # $1 = dir, $2 = upstream version
   mkdir -p "$work/$1"

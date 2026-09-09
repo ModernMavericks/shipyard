@@ -3,7 +3,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/ingredient-notes.sh"
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; trap 'rm -rf "$work"' EXIT
 cd "$work"
 git init -q -b main .
 git config user.email t@example.com; git config user.name tester
@@ -90,7 +90,7 @@ printf '%s\n' "$out" | grep -q 'golang' || { echo "FAIL missing-path skip: $out"
 # --- patch pins ---------------------------------------------------------------------------------
 # A .patch IS an ingredient (it is baked into the product), but "updated (N -> M bytes)" says nothing
 # useful about one. Report what a reader can act on: the subject line, and how much moved.
-work2="$(mktemp -d)"; cd "$work2"
+work2="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work2"
 git init -q -b main .
 git config user.email t@example.com; git config user.name tester
 mkdir -p patches

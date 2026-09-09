@@ -3,7 +3,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/ingredient-pins.sh"
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-pins-test.XXXXXX")"; trap 'rm -rf "$work"' EXIT
 cd "$work"
 git init -q -b main .
 git config user.email t@example.com; git config user.name tester

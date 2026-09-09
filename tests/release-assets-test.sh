@@ -3,7 +3,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/release-assets.sh"
-w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+w="$(mktemp -d "${TMPDIR:-/tmp}/release-assets-test.XXXXXX")"; trap 'rm -rf "$w"' EXIT
 
 mkd() { d="$w/$1"; mkdir -p "$d"; printf 'notes\n' > "$d/RELEASE_NOTES.md"; printf 'pkg\n' > "$d/x.pkg"; printf 'xml\n' > "$d/appcast.xml"; }
 

@@ -29,7 +29,7 @@ for t in tests/*.sh tests/*.bats; do
   # `rc=0; cmd || rc=$?` and not `cmd; rc=$?`: under set -e the bare form exits the runner on the
   # first failing OR SKIPPING test, so nothing after it is ever reported.
   rc=0
-  log="$(mktemp)"
+  log="$(mktemp "${TMPDIR:-/tmp}/run-repo-tests.XXXXXX")"
   case "$t" in
     *.bats)
       # Missing bats is a FAILURE, not a skip: install@v1 puts it on every runner, so its absence

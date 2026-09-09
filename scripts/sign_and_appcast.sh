@@ -47,7 +47,7 @@ if [ -z "$SIGNER" ]; then
     echo "sign_and_appcast: gh is unauthenticated; set GH_TOKEN (e.g. GH_TOKEN: \${{ github.token }}) so the ed25519-sign fetch isn't rate-limited" >&2
     exit 1
   fi
-  _dl=$(mktemp -d)
+  _dl=$(mktemp -d "${TMPDIR:-/tmp}/sign_and_appcast.XXXXXX")
   gh release download -R ModernMavericks/ed25519 -p '*.pkg' -D "$_dl" \
     || { echo "sign_and_appcast: could not download the ed25519 .pkg from mavericks-ed25519 releases (is GH_TOKEN set on this step?)" >&2; exit 1; }
   pkgutil --expand-full "$_dl"/*.pkg "$_dl/x" \

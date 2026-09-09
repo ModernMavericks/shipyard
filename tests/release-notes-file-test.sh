@@ -5,7 +5,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/release-notes-file.sh"
-w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+w="$(mktemp -d "${TMPDIR:-/tmp}/release-notes-file-t.XXXXXX")"; trap 'rm -rf "$w"' EXIT
 cd "$w"
 git init -q -b main .
 git config user.email t@example.com; git config user.name tester

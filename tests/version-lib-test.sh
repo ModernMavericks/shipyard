@@ -6,7 +6,7 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 V="$here/../scripts/version.sh"
 L="$here/../scripts/lib.sh"
-w="$(mktemp -d)"; trap 'rm -rf "$w"' EXIT
+w="$(mktemp -d "${TMPDIR:-/tmp}/version-lib-test.XXXXXX")"; trap 'rm -rf "$w"' EXIT
 printf '1.26.5\n' > "$w/UPSTREAM_VERSION"
 export MAVERICKS_ROOT="$w"
 

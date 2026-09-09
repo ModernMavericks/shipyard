@@ -25,7 +25,7 @@ out="$(CHANGED='components/golang/version' OWN_UPSTREAM_PATHS='' sh "$S")"
 # -- declaring the whole file own-upstream would skip every repackage, declaring it not-own would
 # double-publish a Swift bump (auto-cut N=1 from the push AND a dispatched N+1). So an entry may name
 # a key: "pins.env:SWIFT_VERSION".
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d "${TMPDIR:-/tmp}/repackage-decision-t.XXXXXX")"; trap 'rm -rf "$work"' EXIT
 cd "$work"
 git init -q . && git config user.email t@t && git config user.name t
 cat > pins.env <<'EOF'

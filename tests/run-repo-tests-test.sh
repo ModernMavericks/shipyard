@@ -4,7 +4,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/run-repo-tests.sh"
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d "${TMPDIR:-/tmp}/run-repo-tests-test.XXXXXX")"; trap 'rm -rf "$work"' EXIT
 cd "$work"; mkdir -p tests
 
 # no tests dir at all -> succeed, say so

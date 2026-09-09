@@ -18,7 +18,7 @@ prev="${1:-}"
 shift
 [ "$#" -gt 0 ] || exit 0
 
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 bullets="$tmp/bullets"
 : > "$bullets"
