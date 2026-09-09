@@ -28,3 +28,23 @@ msc_scripts() {
   echo "  install it (README 'Install (once)') or set MAVERICKS_SCRIPTS" >&2
   return 1
 }
+
+# Version ordering WITHOUT `sort -V`: the 10.9 box's BSD sort has no -V, so any script relying on it
+# works in CI and dies on the platform this family targets. Promoted here from
+# assert_appcast_upgradeable.sh, which had already hit that wall and grown a private copy rather than
+# call previous-release-tag.sh; one comparator now serves both, so "which tag is highest" cannot drift
+# between the gate that asserts the ordering and the script that picks the baseline.
+
+# A version is in the comparator's orderable domain iff it is purely dotted-numeric.
+numeric() {
+  case "$1" in ''|.*|*.|*..*|*[!0-9.]*) return 1;; *) return 0;; esac
+}
+
+# echo 1/0/-1 for $1 vs $2 by component-wise numeric compare (missing component = 0); shorter-is-less.
+ver_cmp() {
+  awk -v a="$1" -v b="$2" 'BEGIN{
+    na=split(a,A,"."); nb=split(b,B,"."); n=(na>nb)?na:nb;
+    for(i=1;i<=n;i++){ x=(i<=na)?A[i]+0:0; y=(i<=nb)?B[i]+0:0;
+      if(x>y){print 1; exit} if(x<y){print -1; exit} }
+    print 0 }'
+}

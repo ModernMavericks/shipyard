@@ -14,9 +14,10 @@
 # the ordering check is SKIPPED -- and SAID to be, never silently passed. If tags can't be listed at
 # all (not a git checkout) the gate FAILS rather than skip: a silent no-op is how these bugs shipped.
 #
-# Deliberately does NOT use previous-release-tag.sh: that relies on `sort -V`, which the 10.9 box's BSD
-# sort lacks. The "which tag is highest" decision here reuses this gate's own numeric comparison, so it
-# is correct on every box AND consistent with the ordering assertion it feeds.
+# The "which tag is highest" decision uses the same lib.sh ver_cmp that previous-release-tag.sh now
+# uses -- neither relies on `sort -V`, which the 10.9 box's BSD sort lacks. This gate still walks the
+# tags itself because it needs the numeric KEY it compares, not just the tag name, and comparing with
+# the shared comparator is what keeps it consistent with the ordering assertion it feeds.
 #
 # Usage:
 #   assert_appcast_upgradeable.sh --appcast FILE --version V [--upstream-glob G]
@@ -25,6 +26,9 @@
 #     --upstream-glob  scope for a repo shipping parallel upstream lines (golang: '1.26.*'), so N is
 #                      compared within its own line.
 set -eu
+SELF="$(cd "$(dirname "$0")" && pwd)"
+. "$SELF/lib.sh"          # numeric(), ver_cmp() -- shared so this gate and
+                          # previous-release-tag.sh cannot disagree on which tag is highest
 
 APPCAST=""; VER=""; GLOB=""
 while [ $# -gt 0 ]; do
@@ -37,18 +41,6 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$APPCAST" ] && [ -n "$VER" ] || { echo "assert_appcast_upgradeable: need --appcast --version" >&2; exit 2; }
 [ -f "$APPCAST" ] || { echo "assert_appcast_upgradeable: no appcast: $APPCAST" >&2; exit 1; }
-
-numeric() {  # a version is in the comparator's orderable domain iff it is purely dotted-numeric
-  case "$1" in ''|.*|*.|*..*|*[!0-9.]*) return 1;; *) return 0;; esac
-}
-# echo 1/0/-1 for $1 vs $2 by component-wise numeric compare (missing component = 0); shorter-is-less.
-ver_cmp() {
-  awk -v a="$1" -v b="$2" 'BEGIN{
-    na=split(a,A,"."); nb=split(b,B,"."); n=(na>nb)?na:nb;
-    for(i=1;i<=n;i++){ x=(i<=na)?A[i]+0:0; y=(i<=nb)?B[i]+0:0;
-      if(x>y){print 1; exit} if(x<y){print -1; exit} }
-    print 0 }'
-}
 
 NEW="$(sed -n 's|.*<sparkle:version>\([^<]*\)</sparkle:version>.*|\1|p' "$APPCAST" | head -1)"
 [ -n "$NEW" ] || { echo "assert_appcast_upgradeable: no <sparkle:version> in $APPCAST" >&2; exit 1; }
