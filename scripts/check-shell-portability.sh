@@ -29,6 +29,7 @@ trap 'rm -f "$rulesfile"' EXIT
 cat > "$rulesfile" <<'RULES'
 sort[[:space:]]+(-[A-Za-z]*V\b|--version-sort)	git tag --list | sort -V | tail -1	sort -V	compare numerically instead (shipyard's lib.sh ver_cmp; see previous-release-tag.sh) -- 10.9's BSD sort has no -V and exits 2 having printed NOTHING, so a caller that swallows stderr gets a silently empty result
 \$\(mktemp([[:space:]]+-[A-Za-z]+)*[[:space:]]*\)	work="$(mktemp -d)"	mktemp with no template	give it one: mktemp -d "${TMPDIR:-/tmp}/<name>.XXXXXX" -- 10.9 BSD mktemp rejects a bare -d with a usage error
+lipo[^|;&]*[[:space:]]-archs\b	for a in $(lipo -archs "$b"); do	lipo -archs	use `lipo -info "$f" | sed 's/.*: //'` -- 10.9's lipo has no -archs and dies "unknown flag: -archs"; -info exists on every macOS and BOTH its forms ("Non-fat file: X is architecture: a" and "Architectures in the fat file: X are: a b") end in ": <archs>"
 RULES
 
 TAB="$(printf '\t')"
