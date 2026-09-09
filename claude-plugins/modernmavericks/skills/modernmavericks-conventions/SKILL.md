@@ -442,16 +442,41 @@ express a per-line difference in one place cannot drift into an inconsistent one
   deviations. A repo that installs one line at a time may keep stock paths and rely on the per-line
   feed alone.
 
+## Pushing is a request for CI feedback, not a save button
+
+Since no branch push supersedes another (see `concurrency` below), **every push you make builds to
+completion** across a family of macOS runners — and in the eight auto-cut repos a push to `main` may also
+cut and publish a release. Pushing is therefore a decision, not a reflex.
+
+- **Push when you want the answer**, not every time you have a commit. A series of commits is one push.
+  Local commits cost nothing; a push costs runner minutes and everyone's feedback latency.
+- **Look at what is already running first.** `gh run list --branch main --limit 5` (add `-R
+  ModernMavericks/<repo>` from elsewhere). Queuing another build behind three in-flight ones delays the
+  answer you actually came for.
+- **Before pushing to `main` in an auto-cut repo, know whether this push releases.** If `UPSTREAM_VERSION`
+  has no release yet, it does.
+- This is also why an empty "probe" commit is a real cost. Use one when you genuinely need to see CI
+  behave; delete the branch after.
+
 ## Release workflow
 
 Two release models — **pick by how you publish**:
 
-- **Auto-cut on main** (golang, legacysupport, ed25519): a push to `main` with a not-yet-released upstream
-  cuts `<upstream>-mavericks.1` automatically. Publish decision lives in the build job via
-  `steps.ver.outputs.release`. Use this when Renovate merging the bump should *itself* release.
-- **Tag-only publish** (swift-toolchain, container-tools, magic-trackpad2): build+gate on every push/PR,
-  but publish only on an explicit tag (separate `publish` job `if: github.ref_type == 'tag'`). Use this
-  when a human decides when to cut, or the build is too heavy/risky to auto-release.
+- **Auto-cut on main** — a push to `main` whose upstream has no release yet cuts
+  `<upstream>-mavericks.1` by itself. The publish decision lives in the build job
+  (`steps.ver.outputs.release`). Use this when Renovate merging the bump should *itself* release.
+- **Deliberate publish** — build and gate on every push/PR, but publish only from an explicit tag or a
+  `workflow_dispatch`. Use this when a human decides when to cut, or the build is too heavy or too risky
+  to release unattended.
+
+**Which repo is which** (checked 2026-09-09; each repo's `release.yml` header is the authority):
+
+| auto-cut on a push to `main` | publishes only from a tag or a dispatch |
+|---|---|
+| golang, openssh, 1password, signal-desktop, swift-toolchain, swift-runtime, ed25519, legacysupport | macho-tools, container-tools, clang, tailscale, porthole |
+
+If you cannot say from memory which column a repo is in, read its `release.yml` header before you push to
+its `main` — in the left column, that push is a release.
 
 **Shared shape (both models):**
 
@@ -464,20 +489,35 @@ Two release models — **pick by how you publish**:
 - **`gh release create "$TAG" dist/* …` mints the tag itself** — no `git tag`/push, **no PAT**. A
   `GITHUB_TOKEN`-created tag can't retrigger the workflow, so no second-hop/loop. (Don't reach for
   `softprops/action-gh-release` + a PAT; `gh release create` is the family way.)
-- **`concurrency` — never cancel a publish, and LOCK the version bump.** Use `cancel-in-progress: false`
-  for any run that can publish (auto-cut on main, or a tag) so a superseding push can't kill an in-flight
-  `gh release create`. And a `local_release` **dispatch** must take a version-bump lock: all dispatches
-  share ONE group — keyed on the *event*, **never `github.run_id`** (that makes every run its own group,
-  so the lock is a no-op) — so they queue one-at-a-time. Otherwise two dispatches (a manual cut racing the
-  ingredient-bump auto-repackage) each compute `-mavericks.(N+1)` from the same tags and collide. Keep the
-  dispatch group distinct from the main-push ref group so a dispatch and an ordinary main build still don't
-  cancel each other:
+- **`concurrency` — a run that can publish is alone in its group and is cancelled by nothing.** Only a
+  `pull_request` supersedes, keyed per ref so a force-push replaces its own predecessor. Everything else —
+  a branch push, a `*-mavericks.*` tag, a `workflow_dispatch` — is keyed on `github.run_id`, which puts it
+  in a group of one: never queued, never evicted, never cancelled.
   ```yaml
   concurrency:
-    group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && 'local_release' || github.ref }}
-    cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+    group: >-
+      release-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
   ```
-  `check-family-conventions.sh` fails a `github.run_id`-keyed group for this reason.
+  **`cancel-in-progress: false` was never the protection it looked like.** It protects the run that is
+  EXECUTING and not one that is QUEUED: GitHub keeps only the newest pending run per group and cancels the
+  rest. So the old shape — one shared group, `cancel-in-progress: false`, sold as a version-bump lock —
+  silently discarded runs. mavericks-golang lost one on 2026-09-09, 13 seconds after the run that evicted
+  it. Reproduced deliberately with a throwaway probe: two same-SHA dispatches merely queue, and the *third*
+  cancels the queued one while `cancel-in-progress` evaluates to `false`. A lock that only holds for two is
+  not a lock.
+- **Nothing replaced that lock, and nothing needed to.** Two dispatches can now compute the same
+  `-mavericks.(N+1)`; both build, and shipyard's `publish-release.yml` refuses the loser at publish time
+  with a message naming the tag. A wasted build with a red X beats a release that silently never happened.
+  The version is baked into `pkgbuild --version`, the pkg filename and the appcast's `<sparkle:version>`,
+  so a collision must **rebuild** — re-dispatch — and must never be relabeled.
+- **Why branch pushes do not supersede, even though superseding would be cheaper.** In 8 of the 13 product
+  repos a push to `main` can publish (see the table above). Concurrency is resolved when a run is queued,
+  long before the `ver` step decides whether this one releases, so "cancel the build but not the publish"
+  is not expressible — cancelling the run cancels the publish job with it. Worst case that leaves a
+  half-uploaded release whose tag is already taken, which the publish guard then refuses to re-cut. Paying
+  for every main build is the cheaper mistake. `check-family-conventions.sh` check 1b enforces that the
+  group distinguishes events at all.
 - Sign/appcast and publish steps gate on `steps.ver.outputs.release == 'yes'`. Fork PRs never touch
   `SPARKLE_PRIVATE_KEY` (they resolve `release=no`).
 - Runner `macos-26` (fallback `macos-15`); `actions/*@v7` on new repos.

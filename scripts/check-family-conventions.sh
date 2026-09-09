@@ -33,15 +33,19 @@ grep -q '^concurrency:' "$REL" \
 # evicted by the next arrival, its tag is never minted, and nothing goes red -- the release simply
 # does not exist. Observed 2026-09-09 in mavericks-golang, where 13 seconds separated the two.
 #
-# So push (and pull_request) share a per-ref group and SUPERSEDE -- only the newest commit's feedback
-# is worth having -- while workflow_dispatch and tags get a group of their own and are cancelled by
-# nothing. This replaces the old serialization lock; two dispatches can now compute the same
-# -mavericks.(N+1), and publish-release.yml's "Refuse an already-taken tag" step is what catches it.
+# Only a pull_request supersedes, keyed per ref so a force-push replaces its own predecessor. Every
+# other event -- a branch push, a *-mavericks.* tag, a workflow_dispatch -- is keyed per RUN and so is
+# alone in its group: never queued, never evicted, never cancelled. Branch pushes are on that side
+# because in 8 of 13 product repos a push to main can publish, and concurrency is resolved at queue
+# time, before the ver step decides: cancelling the run would cancel the publish job with it.
+#
+# This replaces the old serialization lock; two dispatches can now compute the same -mavericks.(N+1),
+# and publish-release.yml's "Refuse an already-taken tag" step is what catches it.
 if awk '/^concurrency:/{f=1;next} /^[^[:space:]#]/{f=0} f' "$REL" | grep -q 'github\.event_name'; then
   :
 else
   fail "$REL uses ONE concurrency group for every event — a queued publish is evicted by the next run and its release silently never happens" \
-       "key the group on the event: group: release-\${{ github.event_name == 'push' && github.ref || github.sha }} with cancel-in-progress: \${{ github.event_name == 'push' }}"
+       "key the group on the event: group: release-\${{ github.event_name == 'pull_request' && github.ref || github.run_id }} with cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
 fi
 
 # 2. Tests that exist must run. Hand-enumeration is how they stop running.
