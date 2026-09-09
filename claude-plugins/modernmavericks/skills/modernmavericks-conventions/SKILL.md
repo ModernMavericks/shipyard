@@ -76,6 +76,48 @@ Scripts that only ever run **in CI** (the conventions gate, release-notes genera
 may use `python3`, `sort -V`, and modern tools freely — but say so, so the next person knows which side
 of the line a script is on. When a script must work in both places, the 10.9 constraint wins.
 
+## Build OUT of the source tree, onto fast local storage
+
+**A family checkout may live on NFS, so never put a build directory under
+`${sourceDir}`.** `~/Documents/code` is an NFS automount on the maintainer's
+10.9 box; every `.o`, every link, and every test fixture written under the
+source tree crosses the network.
+
+Measured on macho-tools, same commit, same compiler, full configure + build:
+
+| build directory | wall | CPU |
+|---|---|---|
+| local disk | **2.96s** | 88% |
+| in-tree on NFS | **11.16s** | 25% |
+
+User time was identical (1.78s vs 1.81s) — the entire 3.8x is I/O wait, which
+is why the CPU figure collapses. It compounds: an agent-driven session runs
+dozens of builds per task (one per commit, one per mutation test, one per
+verification round), and the test suites compile fixtures and dylibs on every
+run. This is the single cheapest speedup available to this family.
+
+- **`CMakePresets.json` is committed and shared, so its `binaryDir` must stay
+  portable.** Do NOT hardcode a developer's local path there, and do NOT use
+  `${sourceDir}/build-*`.
+- **`CMakeUserPresets.json` is the CMake-sanctioned per-developer override** —
+  gitignore it, and have it inherit the shared preset while pointing
+  `binaryDir` at local storage:
+  ```json
+  {"version": 6,
+   "configurePresets": [
+     {"name": "native-local", "inherits": "native",
+      "binaryDir": "/private/tmp/build/$env{USER}/<repo>-native"}]}
+  ```
+  Preset names must be unique across both files, so a local preset takes a new
+  name rather than shadowing the shared one.
+- **Do not "fix" this with a symlink** at `${sourceDir}/build-native`. It works
+  — CMake writes through it and the objects land locally — but a `.gitignore`
+  entry written as `build-native/` (with the trailing slash) matches a
+  DIRECTORY and NOT a symlink, so the link shows up as untracked and pollutes
+  `git status` for everyone. Verified, not assumed.
+- **CI is unaffected**: GitHub runners have local disks, so `${sourceDir}` is
+  already fast there and the shared presets keep working unchanged.
+
 ## Build equivalence: native-10.9 ≡ modern-cross (core invariant)
 
 The product must run on **10.9**, but **there is no 10.9 build runner in CI** — every project cross-builds
