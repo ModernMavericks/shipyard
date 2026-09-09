@@ -91,6 +91,42 @@ jobs:
           echo "=== body ==="; cat "dist/$NOTES"
           { echo 'files<<EOF'; printf '%s\n' "$files"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
 
+      - name: Refuse an already-taken tag
+        env:
+          VER: ${{ inputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          # Two dispatches can now run concurrently (each is alone in its concurrency group), so both
+          # can compute the same -mavericks.(N+1) from the same tag set. The loser must NOT relabel:
+          # $VER is already baked into pkgbuild --version, the pkg filename and the appcast's
+          # <sparkle:version>, which assert_appcast_upgradeable.sh compares against the tag history.
+          # Publishing these artifacts under a different tag would ship a release whose contents
+          # contradict its name. Rebuilding is the only correct fix, and that is a re-dispatch.
+          #
+          # Ask the CALLER's remote by URL, not `origin`: this job checks shipyard out into
+          # .shipyard/ and never checks out the calling repo, so there is no origin here to ask --
+          # and a guard that errors out is a guard that passes everything. Hence the three-way
+          # case: 0 = the tag is taken, 2 = --exit-code found no such ref, anything else = the
+          # query itself failed and we must not publish blind. Every family repo is public, so
+          # this needs no token.
+          set +e
+          git ls-remote --exit-code --tags "https://github.com/$REPO" "refs/tags/$VER" >/dev/null 2>&1
+          rc=$?
+          set -e
+          case "$rc" in
+            0)
+              echo "::error::tag $VER already exists -- another run published it while this one was building."
+              echo "::error::Nothing was published. Re-dispatch this release: it will compute the next -mavericks.N and rebuild with that version baked in."
+              exit 1
+              ;;
+            2) echo "tag $VER is free" ;;
+            *)
+              echo "::error::could not read tags from https://github.com/$REPO (git ls-remote exit $rc) -- refusing to publish without knowing whether $VER is taken."
+              exit 1
+              ;;
+          esac
+
       - name: Publish
         uses: softprops/action-gh-release@v3
         with:

@@ -27,13 +27,21 @@ grep -q '^concurrency:' "$REL" \
   || fail "$REL declares no concurrency: — two publishes can race the same tag" \
           "add a concurrency: block with cancel-in-progress: false"
 
-# 1b. ...and it must SERIALIZE local_release dispatches. Keying the group on github.run_id makes every
-# run its own group (concurrency becomes a no-op), so two dispatches — a manual cut racing the
-# ingredient-bump auto-repackage — each compute -mavericks.(N+1) from the same tags and collide on the
-# tag. Dispatches must share ONE group (cancel-in-progress:false): a version-bump lock.
-if awk '/^concurrency:/{f=1;next} /^[^[:space:]#]/{f=0} f' "$REL" | grep -q 'github\.run_id'; then
-  fail "$REL concurrency group keys on github.run_id — local_release dispatches don't serialize, so two can cut the same tag" \
-       "share one dispatch group (e.g. \"…workflow_dispatch' && 'local_release'…\") with cancel-in-progress: false"
+# 1b. ...and the group must DISTINGUISH publishing runs from build feedback. `cancel-in-progress:
+# false` protects the run that is EXECUTING, not one that is QUEUED: GitHub keeps only the newest
+# pending run in a group and cancels the rest. With one group for every event, a queued dispatch is
+# evicted by the next arrival, its tag is never minted, and nothing goes red -- the release simply
+# does not exist. Observed 2026-09-09 in mavericks-golang, where 13 seconds separated the two.
+#
+# So push (and pull_request) share a per-ref group and SUPERSEDE -- only the newest commit's feedback
+# is worth having -- while workflow_dispatch and tags get a group of their own and are cancelled by
+# nothing. This replaces the old serialization lock; two dispatches can now compute the same
+# -mavericks.(N+1), and publish-release.yml's "Refuse an already-taken tag" step is what catches it.
+if awk '/^concurrency:/{f=1;next} /^[^[:space:]#]/{f=0} f' "$REL" | grep -q 'github\.event_name'; then
+  :
+else
+  fail "$REL uses ONE concurrency group for every event — a queued publish is evicted by the next run and its release silently never happens" \
+       "key the group on the event: group: release-\${{ github.event_name == 'push' && github.ref || github.sha }} with cancel-in-progress: \${{ github.event_name == 'push' }}"
 fi
 
 # 2. Tests that exist must run. Hand-enumeration is how they stop running.

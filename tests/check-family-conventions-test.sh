@@ -13,8 +13,8 @@ on:
   push:
     tags: ['*-mavericks.*']
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  group: release-${{ github.event_name == 'push' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 jobs:
   build:
     steps:
@@ -43,18 +43,43 @@ mkrepo "$work/c"; grep -v -e '^concurrency:' -e '^  group:' -e '^  cancel-in-pro
 if (cd "$work/c" && sh "$S" >/dev/null 2>&1); then echo "FAIL missing concurrency should fail"; exit 1; fi
 (cd "$work/c" && sh "$S" 2>&1 | grep -qi concurrency) || { echo "FAIL should name concurrency"; exit 1; }
 
-# 1b. concurrency that keys on github.run_id makes every run its own group, so local_release dispatches
-# don't serialize and two can cut the same -mavericks.(N+1) tag -> must fail.
+# 1b. A release.yml whose concurrency group is IDENTICAL for every event cannot express "supersede
+# build feedback, never cancel a publish". cancel-in-progress:false protects the RUNNING job and not
+# the QUEUED one -- GitHub keeps only the newest pending run per group -- so a queued dispatch is
+# evicted by the next arrival and its release silently never happens. Must fail.
 mkrepo "$work/cr"
 python3 - "$work/cr/.github/workflows/release.yml" <<'PY'
 import sys
 p=sys.argv[1]; s=open(p).read()
-s=s.replace("  group: release-${{ github.ref }}",
-            "  group: release-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}")
+s=s.replace("  group: release-${{ github.event_name == 'push' && github.ref || github.sha }}",
+            "  group: release-${{ github.ref }}")
+s=s.replace("  cancel-in-progress: ${{ github.event_name == 'push' }}",
+            "  cancel-in-progress: false")
 open(p,'w').write(s)
 PY
-if (cd "$work/cr" && sh "$S" >/dev/null 2>&1); then echo "FAIL run_id concurrency group should fail"; exit 1; fi
-(cd "$work/cr" && sh "$S" 2>&1 | grep -qiE 'run_id|serial') || { echo "FAIL should name the run_id/serialize problem"; exit 1; }
+if (cd "$work/cr" && sh "$S" >/dev/null 2>&1); then echo "FAIL: a single-group concurrency block should fail"; exit 1; fi
+(cd "$work/cr" && sh "$S" 2>&1 | grep -qiE 'queued|pending|supersede') || { echo "FAIL: should explain the queued-run eviction"; exit 1; }
+
+# ...and the block the family actually ships passes: folded across lines, cancellable for
+# pull_request too (a force-push must supersede its predecessor), and keyed per RUN -- not per SHA --
+# on the publishing side, because two dispatches at one commit share a SHA and a third evicts the
+# second while it is still pending.
+mkrepo "$work/cok"
+python3 - "$work/cok/.github/workflows/release.yml" <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read()
+s=s.replace("  group: release-${{ github.event_name == 'push' && github.ref || github.sha }}",
+            "  group: >-\n"
+            "    release-${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))\n"
+            "                 || github.event_name == 'pull_request')\n"
+            "                && github.ref || github.run_id }}")
+s=s.replace("  cancel-in-progress: ${{ github.event_name == 'push' }}",
+            "  cancel-in-progress: >-\n"
+            "    ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))\n"
+            "        || github.event_name == 'pull_request' }}")
+open(p,'w').write(s)
+PY
+(cd "$work/cok" && sh "$S" >/dev/null) || { echo "FAIL: the shipped concurrency block should pass"; exit 1; }
 
 # 2. tests exist but CI never runs them
 mkrepo "$work/t"; grep -v 'run-repo-tests' "$work/ok/.github/workflows/release.yml" > "$work/t/.github/workflows/release.yml"
