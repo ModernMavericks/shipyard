@@ -41,7 +41,7 @@ jobs:
       # Python to PATH for every later step in a CONSUMER's job.
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: '3.14'
       - name: Provision PyYAML (the workflow-parse gate's only dependency)
         run: python3 -m pip install --quiet pyyaml && python3 -c 'import yaml; print("PyYAML", yaml.__version__)'
 
