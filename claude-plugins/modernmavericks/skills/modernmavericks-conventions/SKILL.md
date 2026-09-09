@@ -727,6 +727,44 @@ Scoping is the point: swift-toolchain republishing swift.org's `.pkg` must not l
 build-support tarball it *does* build to drift. An unscoped deviation quietly covers artifacts nobody
 meant to excuse.
 
+## A "transitional" decision without an exit task is a permanent one
+
+When a review accepts something as transitional — "for now", "until X is
+factored out", "a defensible first step" — **that acceptance must create a
+task, with the exit condition written down.** Otherwise the transitional state
+becomes the permanent state, silently, and the reasoning that justified it is
+buried in a review nobody re-reads.
+
+The case that produced this rule: macho-tools' `macho9` CLI was specified as
+"one library, one multi-call CLI". Its plan told the implementer each verb
+should be "delegating to existing code" — wording that permits calling a
+library function OR running an existing binary. The implementer chose to
+`fork`/`exec` the sibling `change_dylib` binary for four verbs, because the
+ordinal-renumbering logic was not yet factored out and that file was outside
+the task's scope. The controller caught it and made it the review's central
+question. The reviewer approved it, with genuinely good reasons: no shell so no
+injection surface, refusal fidelity preserved through `WEXITSTATUS`, and it
+avoided re-implementing renumbering that had twice shipped loader-crashing
+bugs.
+
+Every step of that was correct. The result was still wrong: two plans later,
+`macho9` was still a delegator, and a follow-up plan to replace those tools
+with wrappers onto `macho9` turned out to describe a **cycle** — the wrapper
+would call `macho9`, which would call the binary the wrapper replaced. Nobody
+had written down when the transition ends, so it did not.
+
+- **Name the exit condition when you accept the compromise**, not later:
+  "delegate by subprocess until `ordinals` is extracted; then convert" is a
+  task. "Defensible for now" is not.
+- **Put it in the plan, not only in the review.** Reviews are read once;
+  plans are executed.
+- **A later plan that assumes the transitional thing is finished is the
+  failure mode.** The follow-up plan here was written against what the CLI was
+  *specified* to be rather than what it *was* — and only a whole-branch review
+  reading the actual code caught it.
+- Corollary for spec wording: prefer "call the library function" over
+  "delegate to existing code". Ambiguity in a plan is executed, not queried.
+
 ## Family conventions (checked, not just written down)
 
 `sh "$SHIPYARD_SCRIPTS/check-family-conventions.sh"` runs in every product repo's CI and **fails the build**
