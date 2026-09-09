@@ -204,6 +204,16 @@ if printf '%s\n' "$out" | grep -qi 'Traceback'; then
   echo "FAIL should not dump a traceback: $out"; exit 1
 fi
 
+# 10. The 10.9-portability lint runs as part of this gate, so every consumer gets it from the @v1 they
+# already pin. Asserted HERE and not only in shell-portability-test.sh because the wiring is the part
+# that can rot: check-shell-portability.sh could keep passing its own tests while this gate quietly
+# stopped calling it, and nothing would go red.
+mkrepo "$work/p1"
+printf '#!/bin/sh\nd="$(mktemp -d)"\n' > "$work/p1/tool.sh"  # portability-ok: fixture must contain the violation
+(cd "$work/p1" && git add -A) >/dev/null 2>&1
+if out="$(cd "$work/p1" && sh "$S" 2>&1)"; then echo "FAIL a 10.9-unportable script should fail the gate"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'tool.sh:2' || { echo "FAIL should name file:line: $out"; exit 1; }
+
 # 9. Every build ingredient must be able to auto-update. An ingredient nobody tracks is one that
 # silently goes stale: swift-runtime's swift-toolchain pin sat at 6.3.3-mavericks.1 while that repo
 # shipped .3, because updating it meant a human fetching and pasting two SHA256s. Wiring a Renovate

@@ -6,6 +6,7 @@
 # Fails loudly and names the fix. A repo with no release.yml (shipyard itself) has nothing to check.
 #   usage: check-family-conventions.sh
 set -eu
+SELF="$(cd "$(dirname "$0")" && pwd)"   # siblings live here (.shipyard/scripts in a consumer)
 REL=".github/workflows/release.yml"
 [ -f "$REL" ] || { echo "check-family-conventions: no $REL — not a product repo, nothing to check"; exit 0; }
 
@@ -268,6 +269,22 @@ if [ -f INGREDIENTS.md ]; then
         ;;
     esac
   done < INGREDIENTS.md
+fi
+
+# 10. No shell construct the 10.9 base system lacks. These are invisible to CI by construction: they
+# work on the runner and fail on the platform every repo here targets, so the machine that would
+# catch them is the one machine CI never uses. shipyard shipped two of them (`sort -V`, a bare
+# `mktemp -d`) and reached all seven repos through @v1 before anyone noticed -- one of them turning
+# release notes silently empty rather than erroring.
+#
+# The rules live in check-shell-portability.sh, which this gate and shipyard's own test suite both
+# call, so the family's rule and shipyard's rule cannot drift apart. It reports its own file:line and
+# fix, so its output is passed through rather than restated.
+if [ -f "$SELF/check-shell-portability.sh" ]; then
+  sh "$SELF/check-shell-portability.sh" >/dev/null || status=1
+else
+  fail "cannot find check-shell-portability.sh next to this gate — the shipyard checkout is incomplete" \
+       "check out the whole repo (family-conventions.yml does), not just this one script"
 fi
 
 # LAST, after every check: this line used to sit mid-script, so checks appended below it printed

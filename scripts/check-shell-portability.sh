@@ -1,0 +1,77 @@
+#!/bin/sh
+# Gate: no shell construct that the 10.9 base system lacks, in the scripts this family ships.
+#
+# These all share one shape: they work on a CI runner and fail on the platform the family exists to
+# support. CI is therefore structurally incapable of catching them, which is how two of them shipped
+# from shipyard itself and reached every consumer through @v1:
+#
+#   - `sort -V` in previous-release-tag.sh: 10.9's sort exits 2 printing nothing, and
+#     release-notes-file.sh swallows that (`2>/dev/null || true`) into an EMPTY "changed since"
+#     baseline. Release notes silently diffed against nothing. Green in CI the whole time.
+#   - a bare `mktemp -d` in run-repo-tests.sh and 12 test files: 10.9 mktemp demands a template, so
+#     the test runner died on its own logfile and the suite could not START on 10.9.
+#
+# Adding a rule is one line in the table. Each rule carries a SAMPLE it must still match, asserted
+# before any scan: a lint whose pattern quietly stopped matching is green forever AND stops anyone
+# from looking, which is strictly worse than no lint.
+#
+# Scans the repo's git-TRACKED *.sh (so vendored or fetched upstream trees, which we do not get to
+# rewrite, are out of scope), or exactly the files named on the command line.
+#   usage: check-shell-portability.sh [file ...]
+set -eu
+
+# pattern<TAB>sample-it-must-match<TAB>what<TAB>what to do instead
+rulesfile="$(mktemp "${TMPDIR:-/tmp}/shell-portability.XXXXXX")"
+trap 'rm -f "$rulesfile"' EXIT
+cat > "$rulesfile" <<'RULES'
+sort[[:space:]]+(-[A-Za-z]*V\b|--version-sort)	git tag --list | sort -V | tail -1	sort -V	compare numerically instead (shipyard's lib.sh ver_cmp; see previous-release-tag.sh) -- 10.9's BSD sort has no -V and exits 2 having printed NOTHING, so a caller that swallows stderr gets a silently empty result
+\$\(mktemp([[:space:]]+-[A-Za-z]+)*[[:space:]]*\)	work="$(mktemp -d)"	mktemp with no template	give it one: mktemp -d "${TMPDIR:-/tmp}/<name>.XXXXXX" -- 10.9 BSD mktemp rejects a bare -d with a usage error
+RULES
+
+TAB="$(printf '\t')"
+status=0
+
+# Every rule must still match its own sample, or the lint is dead rather than clean.
+while IFS="$TAB" read -r pat sample what instead; do
+  [ -n "$pat" ] || continue
+  printf '%s\n' "$sample" | grep -qE "$pat" || {
+    echo "check-shell-portability: the rule for '$what' no longer matches its own sample -- the lint is dead, not clean" >&2
+    echo "    fix: repair the pattern, or drop the rule deliberately" >&2
+    status=1
+  }
+done < "$rulesfile"
+
+if [ "$#" -gt 0 ]; then
+  files="$*"
+elif git rev-parse --git-dir >/dev/null 2>&1; then
+  files="$(git ls-files '*.sh' 2>/dev/null || true)"
+else
+  echo "check-shell-portability: not a git checkout and no files named -- nothing scanned" >&2
+  echo "    fix: run it in the repo, or pass the files to scan" >&2
+  exit 1
+fi
+
+# Full-line comments are stripped first, so the prose explaining a ban is not itself a violation.
+# A line carrying `portability-ok:` plus a reason is exempt too -- the same escape hatch, and the same
+# obligation to justify it, as the `# shellcheck disable=... # <reason>` lines already in this tree.
+# It exists mainly for the lint's OWN test fixtures, which must contain violations to be worth
+# anything; a reason is required so silencing one stays a visible choice in review rather than a
+# quiet deletion. sed preserves the line count, so grep -n still reports the real line number.
+while IFS="$TAB" read -r pat sample what instead; do
+  [ -n "$pat" ] || continue
+  for f in $files; do
+    [ -f "$f" ] || continue
+    # This file's own rule table holds the samples, which are by construction violations.
+    [ "$(basename "$f")" = "$(basename "$0")" ] && continue
+    hits="$(sed -e 's/^[[:space:]]*#.*//' -e '/portability-ok:[[:space:]]*[^[:space:]]/s/.*//' "$f" | grep -nE "$pat" || true)"
+    [ -n "$hits" ] || continue
+    printf '%s\n' "$hits" | while IFS= read -r h; do
+      echo "check-shell-portability: $f:${h%%:*} uses $what -- unavailable on 10.9" >&2
+    done
+    echo "    fix: $instead" >&2
+    status=1
+  done
+done < "$rulesfile"
+
+[ "$status" -eq 0 ] || exit 1
+echo "check-shell-portability: ok — no 10.9-unavailable constructs"
