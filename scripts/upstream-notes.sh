@@ -27,7 +27,18 @@ up="${ver%%-mavericks.*}"
 hook="$MAVERICKS_ROOT/build/upstream-release-notes-url.sh"
 [ -f "$hook" ] || exit 0
 
-for t in $(cd "$MAVERICKS_ROOT" && git tag --list "$up-mavericks.*"); do
+# Tags we cannot see must not read as "no earlier release", or every repackage gets called new. A
+# shallow clone has none (the family's release jobs use fetch-depth: 0 for exactly this), and a git
+# that refuses the repo lists none. (A pre-2.15 git echoes the unknown flag back, which is not "true".)
+if [ "$(cd "$MAVERICKS_ROOT" && git rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
+  echo "upstream-notes: $MAVERICKS_ROOT is a shallow clone, so its release tags are unknown; omitting the upstream section (use fetch-depth: 0)" >&2
+  exit 0
+fi
+if ! tags="$(cd "$MAVERICKS_ROOT" && git tag --list "$up-mavericks.*")"; then
+  echo "upstream-notes: cannot list release tags in $MAVERICKS_ROOT; omitting the upstream section" >&2
+  exit 0
+fi
+for t in $tags; do
   [ "$t" = "$ver" ] || exit 0
 done
 

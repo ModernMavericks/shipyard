@@ -44,6 +44,22 @@ out="$(sh "$S" 1.1-mavericks.1)"
 printf '%s\n' "$out" | grep -qF 'https://example.com/releases/v1.1)' \
   || { echo "FAIL prefix collision: $out"; exit 1; }
 
+# tags it cannot see must not read as "no earlier release": that would call every repackage new.
+# A shallow clone has no tags at all, and a git that refuses the repo lists none.
+git commit -q --allow-empty -m later     # releases are tagged BEHIND the tip, as in real history
+git clone -q --depth 1 "file://$w" "$w/shallow"
+[ -z "$(git -C "$w/shallow" tag)" ] || { echo "FAIL fixture: shallow clone carried tags"; exit 1; }
+mkdir -p "$w/shallow/build"; cp build/upstream-release-notes-url.sh "$w/shallow/build/"
+out="$(MAVERICKS_ROOT="$w/shallow" sh "$S" 1.0.0-mavericks.3 2>"$w/err")"
+[ -z "$out" ] || { echo "FAIL shallow clone called a repackage new: $out"; exit 1; }
+grep -q 'upstream-notes' "$w/err" || { echo "FAIL shallow not warned"; exit 1; }
+mkdir -p "$w/not-a-repo/build"; cp build/upstream-release-notes-url.sh "$w/not-a-repo/build/"
+out="$(cd "$w/not-a-repo" && MAVERICKS_ROOT="$w/not-a-repo" GIT_CEILING_DIRECTORIES="$w" \
+        sh "$S" 1.0.0-mavericks.3 2>"$w/err")"
+[ -z "$out" ] || { echo "FAIL unlistable tags called a repackage new: $out"; exit 1; }
+grep -q 'upstream-notes' "$w/err" || { echo "FAIL unlistable tags not warned"; exit 1; }
+rm -rf "$w/shallow" "$w/not-a-repo"
+
 # the first release a repo ever cuts ships a new upstream too
 git tag | xargs git tag -d >/dev/null
 out="$(sh "$S" 2.0.0-mavericks.1)"
