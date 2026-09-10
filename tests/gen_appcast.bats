@@ -11,6 +11,25 @@ setup() { SCRIPT="${BATS_TEST_DIRNAME}/../scripts/gen_appcast.sh"; }
   [[ "$output" == *"<strong>bold</strong>"* ]]
 }
 
+@test "render-notes turns generated sections and links into html, not raw markdown" {
+  # upstream-notes.sh and ingredient-notes.sh emit these; Sparkle's WebView would otherwise show
+  # a literal '### Upstream' and '[text](url)'.
+  printf '### Upstream\n\n- [Upstream release notes for 1.2.3](https://example.com/a?b=1&c=2#go1.2.3)\n' \
+    > "$BATS_TMPDIR/n.md"
+  run sh "$SCRIPT" --render-notes "$BATS_TMPDIR/n.md"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"<h3>Upstream</h3>"* ]]
+  [[ "$output" == *'<li><a href="https://example.com/a?b=1&amp;c=2#go1.2.3">Upstream release notes for 1.2.3</a></li>'* ]]
+  [[ "$output" != *"]("* ]]
+}
+
+@test "render-notes leaves brackets that are not a link alone" {
+  printf 'see [the docs] (later) and *em*\n' > "$BATS_TMPDIR/n.md"
+  run sh "$SCRIPT" --render-notes "$BATS_TMPDIR/n.md"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"see [the docs] (later) and <em>em</em>"* ]]
+}
+
 @test "channel title is parameterized" {
   printf 'notes\n' > "$BATS_TMPDIR/n.md"
   run sh "$SCRIPT" "My Product" "1.2.3" "http://x/y.pkg" "10.9.5" "$BATS_TMPDIR/n.md" 'length="1"'

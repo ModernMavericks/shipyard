@@ -1,6 +1,7 @@
 #!/bin/sh
-# Print a path to a GUARANTEED non-empty release-notes file, ending with a generated section naming
-# which build ingredients changed since the previous release.
+# Print a path to a GUARANTEED non-empty release-notes file, ending with generated sections: a link
+# to upstream's own notes when the upstream is new, and which build ingredients changed since the
+# previous release.
 #
 # Both consumers reject an empty file -- sign_and_appcast.sh for the Sparkle <description>, and
 # publish-release.yml for the Release body -- so this must never hand back nothing. A committed
@@ -28,6 +29,12 @@ else
   printf '## %s %s (%s)\n\nAutomated release for Mac OS X 10.9 (Mavericks).\n' \
     "$PRODUCT" "$up" "$TAG" > "$tmp"
 fi
+
+# A new upstream links upstream's own notes (the repo's build/upstream-release-notes-url.sh says
+# where). First, because it is what a reader of a -mavericks.1 came for.
+# Its warnings stay on stderr: a link that silently vanished would look like a repackage.
+UPSEC="$(cd "$MAVERICKS_ROOT" && MAVERICKS_ROOT="$MAVERICKS_ROOT" sh "$SELF/upstream-notes.sh" "$FULL" || true)"
+[ -z "$UPSEC" ] || printf '\n%s\n' "$UPSEC" >> "$tmp"
 
 # Append which ingredients moved. Its siblings ship alongside this script, so unlike the per-repo
 # copies there is no "the installed shipyard is stale" path to warn about. Still tolerant:

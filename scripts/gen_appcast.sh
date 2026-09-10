@@ -11,7 +11,9 @@
 # The renderer is deliberately dependency-free (pure awk) so it runs identically on the 10.9 dev box's
 # BSD/BWK awk and on a modern CI runner -- NO pandoc/cmark. It handles exactly the subset our notes use:
 #   `## Heading`            -> <h2>Heading</h2>
+#   `### Heading`           -> <h3>Heading</h3>       (the generated upstream/ingredient sections)
 #   contiguous `- ` bullets -> <ul><li>...</li></ul>   (continuation lines fold into the item)
+#   `[text](scheme:url)`    -> <a href="...">text</a>  (upstream-notes.sh links upstream's notes)
 #   `**bold**`              -> <strong>bold</strong>
 #   `*italic*`              -> <em>italic</em>
 #   blank-line-separated prose (incl. the trailing `Requires...`) -> <p>...</p>
@@ -33,8 +35,19 @@ md_to_html() {
       gsub(/>/, "\\&gt;",  s)
       return s
     }
-    function inline(s,   r, before, m) {    # **bold** then *italic* (BWK awk: no gensub backrefs)
+    function inline(s,   r, before, m, i) { # links, **bold**, *italic* (BWK awk: no gensub backrefs)
       s = esc(s)
+      r = ""
+      # Only a scheme-qualified target is a link, so prose like "[the docs] (later)" stays prose.
+      # The URL was escaped above, which is exactly what an href attribute wants (&amp;).
+      while (match(s, /\[[^]]+\]\([a-z]+:[^) ]+\)/)) {
+        before = substr(s, 1, RSTART - 1)
+        m = substr(s, RSTART + 1, RLENGTH - 2)          # text](url
+        i = index(m, "](")
+        r = r before "<a href=\"" substr(m, i + 2) "\">" substr(m, 1, i - 1) "</a>"
+        s = substr(s, RSTART + RLENGTH)
+      }
+      s = r s
       r = ""
       while (match(s, /\*\*[^*]+\*\*/)) {
         before = substr(s, 1, RSTART - 1)
@@ -63,6 +76,11 @@ md_to_html() {
     line ~ /^## / {                                         # heading
       close_block()
       print "<h2>" inline(substr(line, 4)) "</h2>"
+      next
+    }
+    line ~ /^### / {
+      close_block()
+      print "<h3>" inline(substr(line, 5)) "</h3>"
       next
     }
     line ~ /^- / {                                          # bullet item start

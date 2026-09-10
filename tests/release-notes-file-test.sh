@@ -50,4 +50,16 @@ grep -q '1.26.4-mavericks.3 -> 1.26.5-mavericks.1' "$p2" || { echo "FAIL pin del
 head -1 "$p2" | grep -q 'Hand-written' || { echo "FAIL prose lost when appending"; exit 1; }
 rm -f "$p" "$p2"
 
+# with the repo's hook, a NEW upstream links upstream's notes -- ahead of the ingredient facts
+mkdir -p build
+printf '#!/bin/sh\nprintf "https://example.com/v%%s\\n" "$1"\n' > build/upstream-release-notes-url.sh
+p="$(sh "$S" 2.0.0-mavericks.1 2.0.0-mavericks.1 'Product')"
+grep -qF '(https://example.com/v2.0.0)' "$p" || { echo "FAIL no upstream link"; cat "$p"; exit 1; }
+u="$(grep -n '### Upstream' "$p" | cut -d: -f1)"; i="$(grep -n '### Build ingredients' "$p" | cut -d: -f1)"
+[ "$u" -lt "$i" ] || { echo "FAIL upstream section should precede ingredients"; cat "$p"; exit 1; }
+# ...and a repackage of an upstream already shipped does not
+p2="$(sh "$S" 1.0.0-mavericks.2 1.0.0-mavericks.2 'Product')"
+! grep -q '### Upstream' "$p2" || { echo "FAIL repackage linked upstream notes"; cat "$p2"; exit 1; }
+rm -f "$p" "$p2"
+
 echo "PASS: release-notes-file (shared)"
