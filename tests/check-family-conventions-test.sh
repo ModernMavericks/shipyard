@@ -28,6 +28,9 @@ YML
   # asks git what is tracked -- so the fixture has to be a real checkout.
   printf '1.0.0\n' > "$1/UPSTREAM_VERSION"
   printf '/VERSION\n' > "$1/.gitignore"
+  # ...and says where upstream's own release notes live, for a release that ships a new upstream.
+  mkdir -p "$1/build"
+  printf '#!/bin/sh\nprintf "https://example.com/v%%s\\n" "$1"\n' > "$1/build/upstream-release-notes-url.sh"
   (cd "$1" && git init -q && git add -A) >/dev/null 2>&1
 }
 
@@ -366,6 +369,29 @@ mkrepo "$work/r3"
 printf '# Build ingredients\n\n| I | Pinned in | Renovate | On a bump |\n|---|---|---|---|\n| CA bundle | `vendor/cacert.pem` | ❌ **untrackable — manual refresh** (see below) | watched path |\n' \
   > "$work/r3/INGREDIENTS.md"
 (cd "$work/r3" && sh "$S" >/dev/null) || { echo "FAIL declared-untrackable should pass"; exit 1; }
+
+# 11. A release shipping a new upstream links upstream's notes: the repo commits the hook that says
+# where, or says in INGREDIENTS.md why there is nothing to link.
+mkrepo "$work/u1"; (cd "$work/u1" && git rm -q --cached build/upstream-release-notes-url.sh && rm -r build)
+if out="$(cd "$work/u1" && sh "$S" 2>&1)"; then echo "FAIL no hook and no reason should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'upstream-release-notes-url.sh' || { echo "FAIL should name the hook: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'No upstream release notes:' || { echo "FAIL should name the declaration: $out"; exit 1; }
+# the declaration, with a reason, is the other way to comply (a self-upstream repo; a bundle)
+printf '# Build ingredients\n\nNo upstream release notes: this repo is its own upstream.\n' > "$work/u1/INGREDIENTS.md"
+(cd "$work/u1" && sh "$S" >/dev/null) || { echo "FAIL declared no-upstream-notes should pass"; exit 1; }
+# ...but an empty reason is not a reason
+printf '# Build ingredients\n\nNo upstream release notes:\n' > "$work/u1/INGREDIENTS.md"
+if (cd "$work/u1" && sh "$S" >/dev/null 2>&1); then echo "FAIL a reasonless declaration should fail"; exit 1; fi
+# the swift repos keep their scripts, and so the hook, in scripts/
+mkrepo "$work/u2"; (cd "$work/u2" && mkdir scripts && git mv build/upstream-release-notes-url.sh scripts/)
+[ -f "$work/u2/scripts/upstream-release-notes-url.sh" ] && [ ! -e "$work/u2/build/upstream-release-notes-url.sh" ] \
+  || { echo "FAIL fixture: hook did not move to scripts/"; exit 1; }
+(cd "$work/u2" && sh "$S" >/dev/null) || { echo "FAIL a hook in scripts/ should pass"; exit 1; }
+# a hook that exists but is not committed is the trap: a .gitignore'd build/ drops it without a word
+# (macports-legacy-support ignores build/ wholesale), and CI's fresh checkout never sees it
+mkrepo "$work/u3"; (cd "$work/u3" && git rm -q --cached build/upstream-release-notes-url.sh && printf 'build/\n' >> .gitignore)
+if out="$(cd "$work/u3" && sh "$S" 2>&1)"; then echo "FAIL an uncommitted hook should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -qi 'not committed' || { echo "FAIL should say it is not committed: $out"; exit 1; }
 
 # A failing run must NOT also print "ok". The success line used to sit mid-script, so checks appended
 # after it (7, 8, 9) printed "check-family-conventions: ok" and THEN failed -- the exact "output says

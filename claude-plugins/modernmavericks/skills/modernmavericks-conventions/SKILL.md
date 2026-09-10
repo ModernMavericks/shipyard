@@ -635,7 +635,10 @@ not the `-mavericks.N` tag).
 - **No hook? Say why, in `INGREDIENTS.md`:** a line `No upstream release notes: <reason>`. That is
   every repo that is its **own** upstream (porthole, macho-tools, shipyard) and a port with no single
   upstream to point at (container-tools bundles six components, each an ingredient). A missing hook
-  with no stated reason reads as a repo that never adopted this.
+  with no stated reason reads as a repo that never adopted this, and `check-family-conventions.sh`
+  fails it — as it fails a hook that exists but is **not committed** (macports-legacy-support's
+  `.gitignore` ignores `build/`, so `git add -A` skipped its hook silently; it is force-added, like the
+  repo's other `build/*.sh`).
 - **A script, not a URL template, because some upstreams cannot be addressed by version.** Tailscale's
   changelog is anchored by *date* (`#2026-08-19-client`), so its hook fetches the page, finds the
   client entry titled exactly `Tailscale v<version>`, and links that anchor. A hook like that: stays
@@ -904,6 +907,7 @@ none of which anything detected. A convention that is not checked is a conventio
 | `VERSION` is **not committed** (an untracked one is fine — it's a build product) | The committed copy drifts: container-tools built `-mavericks.14` from a file saying `.2`, which also made its tag path (`tag == VERSION`) impossible to satisfy |
 | Every workflow parses **with duplicate keys rejected** | A second `with:` on one step is legal YAML — last key wins — so ordinary parsers accept it and GitHub refuses to run the workflow. No other gate can catch it, because CI never starts |
 | No `INGREDIENTS.md` row marked ❌ unless it says **untrackable** | An ingredient nobody tracks goes stale silently; a bare ❌ reads as an oversight rather than a decision |
+| A **committed** `build/` or `scripts/upstream-release-notes-url.sh`, or an `INGREDIENTS.md` line `No upstream release notes: <reason>` | A `-mavericks.1` exists to ship someone else's changes; notes that name the version without linking what changed leave the reader to go find it |
 | If `lines/` exists, every `lines/<id>/UPSTREAM_VERSION` has its OWN **capped** Renovate manager | An uncapped line walks onto the next major it was never built for; an unmanaged line goes stale silently; one manager spanning lines cannot cap each |
 
 Wire it with the reusable workflow — three lines, and it never changes when a check is added:

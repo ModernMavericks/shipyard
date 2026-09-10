@@ -377,6 +377,28 @@ else
        "check out the whole repo (family-conventions.yml does), not just this one script"
 fi
 
+# 11. A release that ships a NEW upstream links upstream's own notes: a -mavericks.1 exists to deliver
+# someone else's changes, and naming the version does not say where to read them. shipyard's
+# upstream-notes.sh writes the link; the repo says WHERE, in a COMMITTED build/ or scripts/
+# upstream-release-notes-url.sh -- or says in INGREDIENTS.md why there is nothing to link ("No
+# upstream release notes: <reason>": a repo that is its own upstream, a bundle with no single one).
+# Committed, not merely present: macports-legacy-support's .gitignore ignores build/ wholesale, so
+# `git add -A` skipped its new hook without a word, and CI's fresh checkout would never have seen it.
+hook_tracked=no; hook_present=no
+for d in build scripts; do
+  if git ls-files --error-unmatch "$d/upstream-release-notes-url.sh" >/dev/null 2>&1; then hook_tracked=yes; fi
+  if [ -f "$d/upstream-release-notes-url.sh" ]; then hook_present=yes; fi
+done
+if [ "$hook_tracked" = no ] && ! grep -q 'No upstream release notes: *[^ ]' INGREDIENTS.md 2>/dev/null; then
+  if [ "$hook_present" = yes ]; then
+    fail "upstream-release-notes-url.sh exists but is not committed — a .gitignore'd build/ drops it silently, and CI's fresh checkout never sees it" \
+         "git add -f it (and ignore only build OUTPUT dirs, never build/ itself)"
+  else
+    fail "a release shipping a new upstream cannot link upstream's notes: no committed build/upstream-release-notes-url.sh, and INGREDIENTS.md does not say why" \
+         "add the hook (usually one printf -- see the conventions skill, 'A new upstream links upstream's own notes'), or a line 'No upstream release notes: <reason>' in INGREDIENTS.md"
+  fi
+fi
+
 # LAST, after every check: this line used to sit mid-script, so checks appended below it printed
 # "ok" and then failed in the same run.
 [ "$status" -eq 0 ] && echo "check-family-conventions: ok"
