@@ -243,12 +243,21 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   # finds nothing exits 1. As the LAST command of a command substitution that would fail the
   # assignment and kill the whole gate with no output at all -- which is exactly what it did on the
   # first draft. Hence the `|| true` and the trailing `:`.
+  #
+  # Three filters, each of which the first draft lacked and CI immediately punished:
+  #   - .shipyard/ is EXCLUDED. family-conventions.yml checks shipyard out there, inside the
+  #     consumer's workspace, and runs this gate from it -- so an unfiltered sweep reads this very
+  #     file and reports the `cmake ... -B <dir>` in these comments as the consumer's build dir.
+  #   - COMMENT lines are dropped. Prose that mentions a cmake command line is not a build.
+  #   - the candidate must LOOK like a relative path, which throws out `<dir>`, a stray comma, and
+  #     the regex fragment on the line below.
   bdirs="$(
     {
       [ -n "$CI_FILES" ] && cat $CI_FILES 2>/dev/null
-      find . -name '*.sh' -not -path './.git/*' -exec cat {} + 2>/dev/null
+      find . -name '*.sh' -not -path './.git/*' -not -path './.shipyard/*' -exec cat {} + 2>/dev/null
       :
-    } | grep -oE 'cmake[^;|&]*-B[[:space:]]*[^[:space:];|&)]+' \
+    } | sed -e 's/^[[:space:]]*#.*$//' \
+      | grep -oE 'cmake[^;|&]*-B[[:space:]]*[^[:space:];|&)]+' \
       | sed -e 's/.*-B[[:space:]]*//' -e 's/^["'"'"']//' -e 's/["'"'"']$//' || true
     if [ -f CMakePresets.json ]; then
       sed -n 's/.*"binaryDir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' CMakePresets.json
@@ -260,6 +269,11 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     d="${d%/}"
     case "$d" in
       ''|/*|~*|*'$'*|*..*) continue ;; # out of tree, or a path we cannot resolve: not ours to demand
+    esac
+    # Must look like a relative path. Prose survives the comment filter when it is inline rather than
+    # a whole comment line, and `<dir>` is not a directory.
+    case "$d" in
+      *[!A-Za-z0-9._/+-]*) continue ;;
     esac
     # Ask about "$d/", not "$d". A .gitignore pattern written `build/updater/` matches a DIRECTORY,
     # and git can only tell a nonexistent path is one if the query says so. Build output is exactly

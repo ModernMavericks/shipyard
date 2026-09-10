@@ -263,6 +263,30 @@ printf '{"version":6,"configurePresets":[{"name":"n","binaryDir":"${sourceDir}/b
 if (cd "$work/bpre" && git add -A >/dev/null 2>&1; sh "$S" >/dev/null 2>&1); then echo "FAIL: an unignored preset binaryDir should fail"; exit 1; fi
 (cd "$work/bpre" && sh "$S" 2>&1 | grep -q 'build-native') || { echo "FAIL: should name the preset binaryDir"; exit 1; }
 
+# 7d, the way it actually runs: family-conventions.yml checks shipyard out to .shipyard/ INSIDE the
+# consumer's workspace and runs the gate from there. A sweep of "*.sh" therefore reads the gate's OWN
+# source -- whose comments explain the rule using `cmake -S updater -B build/updater` and
+# `cmake ... -B <dir>` as examples. The first draft reported those as unignored build directories and
+# turned every consumer's conventions run red. Vendored shipyard is not this repo's build.
+mkrepo "$work/bvend"
+mkdir -p "$work/bvend/.shipyard/scripts"
+cat > "$work/bvend/.shipyard/scripts/check-family-conventions.sh" <<'SH'
+#!/bin/sh
+# tailscale configured the updater with `cmake -S updater -B build/updater` -- a path the shared
+# presets do not name -- so nothing tied it to .gitignore. Every `cmake ... -B <dir>` counts.
+SH
+(cd "$work/bvend" && git add -A >/dev/null 2>&1; sh "$S" >/dev/null) || { echo "FAIL: a vendored .shipyard/ must not be read as this repo's build"; exit 1; }
+
+# ...and a COMMENT in the repo's own shell that merely mentions a cmake command line is prose, not a
+# build. Only a line that actually runs cmake names a directory.
+mkrepo "$work/bcomment"
+cat > "$work/bcomment/note.sh" <<'SH'
+#!/bin/sh
+# Historically we ran `cmake -S . -B legacy-build` here; see the notes for why we stopped.
+exit 0
+SH
+(cd "$work/bcomment" && git add -A >/dev/null 2>&1; sh "$S" >/dev/null) || { echo "FAIL: a commented-out cmake line is not a build dir"; exit 1; }
+
 # 8. Workflow YAML must parse with DUPLICATE KEYS REJECTED. A second `with:` on one step is valid
 # YAML (last key wins) and ordinary parsers accept it, but GitHub refuses to run the workflow: the run
 # shows up named after the file path, "likely failed because of a workflow file issue", with no step
