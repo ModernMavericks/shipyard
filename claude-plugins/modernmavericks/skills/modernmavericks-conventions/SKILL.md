@@ -31,15 +31,29 @@ The family has an older/simpler variant and a current/mature variant. **Start fr
   self-registers in the CMake user package registry; consume it downstream with `find_package` — **no
   `CMAKE_PREFIX_PATH`, no vendored copy, no hand-run `cmake --install`.**
 - `@v1` is the **moving major tag**; Renovate's native github-actions manager tracks it — **no custom
-  manager, no SHA pin, no marker comment** for it. It moves **automatically**: shipyard's `tag.yml`
-  runs on every push to `main`, cuts the immutable `vX.Y.Z` from `VERSION`, and fast-forwards `@v1` to
-  that commit. So a shipyard change reaches consumers by **pushing `main`** — never move `@v1` by
-  hand, and there's no separate "publish" step to run.
+  manager, no SHA pin, no marker comment** for it. It moves **automatically**: shipyard's `release.yml`
+  runs on every push to `main`, derives the version from the committed line in `UPSTREAM_VERSION` plus
+  the commit count (`scripts/shipyard-version.sh`), publishes a GitHub Release for the immutable
+  `vX.Y.Z`, and fast-forwards `@v1` to that commit. So a shipyard change reaches consumers by **pushing
+  `main`** — never move `@v1` by hand, and there's no separate "publish" step to run.
 - **After `install@v1`, use `$SHIPYARD_SCRIPTS`** — the action exports the installed scripts dir. Do NOT
   re-derive it with `SH="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* | head -1)/scripts"`;
   that incantation appeared 11 times across the family before it was exported once. (It remains valid
   — it is what the action itself reads — so adopting `$SHIPYARD_SCRIPTS` is per-repo, never a flag day.)
 - Reuse a sibling checkout of shipyard locally; don't duplicate its logic.
+
+**Pinning shipyard: `@v1` normally, `@vX.Y.Z` when you need to stand still.** `@v1` is a *moving*
+tag — it advances on every push to shipyard's `main` and reaches every consumer within minutes, which
+is what makes a shared fix propagate for free. The cost is that a bad shipyard reaches everyone just as
+fast: on 2026-09-09 a defect in conventions check 7d reddened two repos within the hour.
+
+Since shipyard cuts `vLINE.COUNT` on every push (`scripts/shipyard-version.sh`), every one of those
+pushes is a real, downloadable, pinnable release. So when `@v1` breaks you and you cannot wait for a
+fix, pin the previous version — `uses: ModernMavericks/shipyard/.github/workflows/family-conventions.yml@v1.0.121`
+— and move back to `@v1` afterwards. Say why in the diff, so the pin has an exit.
+
+`gh release list -R ModernMavericks/shipyard` shows what is available;
+`gh api repos/ModernMavericks/shipyard/git/ref/tags/v1 --jq .object.sha` says where `@v1` points now.
 
 **Use its facilities for 10.9-correctness — do NOT reinvent SDK fetching, floors, build-mode handling,
 updaters, signing, or compat checks:**
