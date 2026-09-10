@@ -1,13 +1,22 @@
 cmake_minimum_required(VERSION 3.16)
-# First-party repo (we are the upstream): the self-owned version lives in committed UPSTREAM_VERSION;
-# VERSION is the gitignored build product. Read VERSION if present, else fall back to UPSTREAM_VERSION —
-# the same shape this project's own conventions require of every consumer (a committed VERSION goes stale
-# while tags move; check-family-conventions.sh fails a tracked one). Not resolve-version.sh: that hardcodes
-# `-mavericks.N`, which is for repackaged upstreams, not for us.
+# VERSION (a gitignored build product) wins when present -- release.yml writes it. Otherwise derive
+# from the commit count, so a developer's `cmake --install` from a checkout stamps the REAL version
+# rather than the bare line: an install is a snapshot with no staleness signal of its own, and the
+# number it carries is the only way to tell one apart from another. UPSTREAM_VERSION is the last
+# resort, for a tarball with no .git (it yields the line, which is honest about being imprecise).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
   file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" _MSC_VERSION LIMIT_COUNT 1)
 else()
-  file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/UPSTREAM_VERSION" _MSC_VERSION LIMIT_COUNT 1)
+  execute_process(
+    COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/scripts/shipyard-version.sh"
+    OUTPUT_VARIABLE _MSC_VERSION_OUT ERROR_QUIET RESULT_VARIABLE _MSC_VERSION_RC
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(_MSC_VERSION_RC EQUAL 0)
+    string(REGEX MATCH "FULL=([^\n]*)" _MSC_VERSION_MATCH "${_MSC_VERSION_OUT}")
+    set(_MSC_VERSION "${CMAKE_MATCH_1}")
+  else()
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/UPSTREAM_VERSION" _MSC_VERSION LIMIT_COUNT 1)
+  endif()
 endif()
 project(MavericksShipyard VERSION ${_MSC_VERSION} LANGUAGES NONE)
 
