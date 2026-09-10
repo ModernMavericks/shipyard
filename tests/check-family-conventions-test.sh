@@ -287,6 +287,22 @@ exit 0
 SH
 (cd "$work/bcomment" && git add -A >/dev/null 2>&1; sh "$S" >/dev/null) || { echo "FAIL: a commented-out cmake line is not a build dir"; exit 1; }
 
+# 7d must read only what the repo COMMITS. An earlier draft swept the worktree with `find`, so it
+# also read build output and the AppleDouble `._*.sh` files an NFS checkout collects -- 65 .sh swept
+# against 58 tracked in shipyard itself. BSD sed aborts on their binary content ("RE error: illegal
+# byte sequence"), which truncates the candidate stream mid-pipe: the check then silently stops
+# looking, and an unignored build dir later in the sweep goes unreported. Tracked files only.
+mkrepo "$work/buntracked"
+printf '#!/bin/sh\ncmake -S . -B never-committed-build\n' > "$work/buntracked/stray.sh"
+printf 'binary-\000-junk\n' > "$work/buntracked/._decoy.sh"
+(cd "$work/buntracked" && sh "$S" >/dev/null 2>&1) || { echo "FAIL: an UNTRACKED .sh must not be scanned as this repo's build"; exit 1; }
+(cd "$work/buntracked" && sh "$S" 2>&1 | grep -qi 'illegal byte sequence') && { echo "FAIL: a binary ._*.sh must not reach sed"; exit 1; }
+
+# ...but once committed, the very same file counts.
+(cd "$work/buntracked" && git add stray.sh >/dev/null 2>&1)
+if (cd "$work/buntracked" && sh "$S" >/dev/null 2>&1); then echo "FAIL: a COMMITTED build script's dir must be required to be ignored"; exit 1; fi
+(cd "$work/buntracked" && sh "$S" 2>&1 | grep -q 'never-committed-build') || { echo "FAIL: should name the tracked script's build dir"; exit 1; }
+
 # 8. Workflow YAML must parse with DUPLICATE KEYS REJECTED. A second `with:` on one step is valid
 # YAML (last key wins) and ordinary parsers accept it, but GitHub refuses to run the workflow: the run
 # shows up named after the file path, "likely failed because of a workflow file issue", with no step

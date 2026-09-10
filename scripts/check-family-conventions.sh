@@ -244,17 +244,23 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   # assignment and kill the whole gate with no output at all -- which is exactly what it did on the
   # first draft. Hence the `|| true` and the trailing `:`.
   #
-  # Three filters, each of which the first draft lacked and CI immediately punished:
-  #   - .shipyard/ is EXCLUDED. family-conventions.yml checks shipyard out there, inside the
-  #     consumer's workspace, and runs this gate from it -- so an unfiltered sweep reads this very
-  #     file and reports the `cmake ... -B <dir>` in these comments as the consumer's build dir.
+  # `git ls-files` and not `find`: read only what the repo COMMITS. A find(1) sweep also reads build
+  # output and the AppleDouble `._*.sh` files an NFS checkout collects -- in shipyard, 65 .sh against
+  # 58 tracked. BSD sed aborts on their binary content ("RE error: illegal byte sequence"), and that
+  # truncates the candidate stream mid-pipe, so the check silently stops looking and an unignored
+  # build dir further down goes unreported. Tracked-only also drops the vendored .shipyard/ checkout
+  # that family-conventions.yml unpacks inside the consumer's workspace -- an unfiltered sweep read
+  # THIS file and reported the `cmake ... -B <dir>` in these very comments as the consumer's build
+  # dir, reddening two repos within the hour it shipped.
+  #
+  # The other two filters stay, for prose inside files that ARE committed:
   #   - COMMENT lines are dropped. Prose that mentions a cmake command line is not a build.
   #   - the candidate must LOOK like a relative path, which throws out `<dir>`, a stray comma, and
   #     the regex fragment on the line below.
   bdirs="$(
     {
       [ -n "$CI_FILES" ] && cat $CI_FILES 2>/dev/null
-      find . -name '*.sh' -not -path './.git/*' -not -path './.shipyard/*' -exec cat {} + 2>/dev/null
+      git ls-files -z '*.sh' 2>/dev/null | xargs -0 cat 2>/dev/null
       :
     } | sed -e 's/^[[:space:]]*#.*$//' \
       | grep -oE 'cmake[^;|&]*-B[[:space:]]*[^[:space:];|&)]+' \
