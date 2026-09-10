@@ -25,7 +25,7 @@ fail() { echo "check-family-conventions: $1" >&2; echo "    fix: $2" >&2; status
 # 1. Concurrency: two publishes racing the same tag is a corrupt release, not a flaky build.
 grep -q '^concurrency:' "$REL" \
   || fail "$REL declares no concurrency: — two publishes can race the same tag" \
-          "add a concurrency: block with cancel-in-progress: false"
+          "add a concurrency: block -- group keyed on github.run_id, cancel-in-progress naming pull_request"
 
 # 1b. ...and it must put a run that CAN PUBLISH alone in its group, cancellable by nothing.
 #

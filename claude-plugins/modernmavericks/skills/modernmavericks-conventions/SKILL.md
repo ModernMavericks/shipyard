@@ -899,7 +899,7 @@ none of which anything detected. A convention that is not checked is a conventio
 
 | Check | Why it is a gate |
 |---|---|
-| `release.yml` declares `concurrency:`, and its group is not keyed on `github.run_id` | Two publishes racing the same tag is a corrupt release; a run_id-keyed group is no lock, so two `local_release` dispatches collide |
+| `release.yml` declares `concurrency:`, its group IS keyed on `github.run_id`, and `cancel-in-progress` names `pull_request` | A run that can publish must be alone in its group. `cancel-in-progress: false` protects the RUNNING job and not the QUEUED one, so a shared group silently discards releases — golang lost one 13 seconds after the run that evicted it. Both halves are checked, because either alone lets the old shape back in |
 | Test files exist ⇒ some workflow runs them | Nine unrun tests, two silently rotted, is what "we'll wire it up later" looks like |
 | `INGREDIENTS.md` exists | An input nobody documented is an input nobody is watching |
 | No Renovate key the shared preset already sets | A local copy silently stops tracking the preset when the preset changes |
@@ -1000,8 +1000,9 @@ it here.** A silently dropped increment is how the family drifted in the first p
 - `ignoreTests: false` (default) but no PR check → automerge **stalls forever**. Add the `pull_request`
   gate or set `ignoreTests: true`.
 - Auto-cutting on main with `cancel-in-progress: true` → a rapid second push cancels the release mid-flight.
-- Keying the `concurrency` group on `github.run_id` → every run is its own group, so two `local_release`
-  dispatches (a manual cut racing the ingredient-bump auto-repackage) both cut the same `-mavericks.(N+1)`.
+- Copying an older repo's **shared-group** `concurrency:` block → a queued publishing run is evicted by
+  the next arrival and its release silently never happens: no tag, nothing red. Key the group on
+  `github.run_id` so a run that can publish is alone in it.
 - Adding a PR trigger without the `rel=no unless main` guard → a PR build tries to publish.
 - Committing `VERSION`, or building assuming it exists → it's gitignored/workflow-written.
 - Reaching for a PAT to create the release tag → `gh release create` mints it under `GITHUB_TOKEN`.
