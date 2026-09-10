@@ -1,0 +1,129 @@
+name: release
+
+# shipyard is consumed through a MOVING tag: fifteen repos pin @v1, and every push to main reaches
+# them within minutes. Until now nothing recorded WHICH shipyard that was -- UPSTREAM_VERSION sat at
+# 1.0.5 across 13 content changes, so an install could not be told apart from a month-old one, and a
+# bad @v1 could not be pinned away from. Every push therefore cuts a version now.
+#
+# tag.yml used to own the tags. It is gone: one workflow owns both the immutable vX.Y.Z tag and the
+# moving @vX, so the two cannot disagree about what @v1 points at.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# A run that can publish is alone in its group and is cancelled by nothing (conventions check 1b).
+# Here EVERY push publishes, so there is no cancellable half but pull_request.
+concurrency:
+  group: >-
+    release-${{ github.event_name == 'pull_request'
+                && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: macos-26   # the CMake modules gate on Apple clang; Linux cannot exercise them
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0        # shipyard-version.sh counts commits
+
+      - name: Install mavericks-shipyard (self)
+        uses: ./.github/actions/install
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Provision PyYAML (the workflow-parse gate's only dependency)
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Resolve the version
+        id: ver
+        run: |
+          set -eu
+          out="$(sh scripts/shipyard-version.sh)"
+          ver="$(printf '%s\n' "$out" | sed -n 's/^FULL=//p')"
+          printf '%s\n' "$ver" > VERSION      # a build product; gitignored, read by CMakeLists
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "shipyard $ver"
+
+      - name: ctest (parameterized suites)
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/build"
+          ctest --test-dir "$RUNNER_TEMP/build" --output-on-failure
+
+      - name: Standalone test suites
+        run: sh scripts/run-repo-tests.sh
+
+      # shipyard must satisfy every convention it exports. It could not before: with no release.yml
+      # the gate exited early here, which is how check 7d's defect stayed invisible in the one repo
+      # whose files contain example `cmake ... -B` command lines.
+      - name: Our own conventions gate
+        run: sh scripts/check-family-conventions.sh
+
+      - name: Assemble the release tarball
+        run: |
+          set -eu
+          v='${{ steps.ver.outputs.version }}'
+          mkdir -p dist "$RUNNER_TEMP/stage/shipyard-$v"
+          # Exactly what `cmake --install` lays down, so the asset and the install agree.
+          cp -R CMakeLists.txt UPSTREAM_VERSION VERSION default.json mavericks-presets.json \
+                scripts updater "$RUNNER_TEMP/stage/shipyard-$v/"
+          cp ./*.cmake "$RUNNER_TEMP/stage/shipyard-$v/"
+          ( cd "$RUNNER_TEMP/stage" && tar -czf - "shipyard-$v" ) > "dist/shipyard-$v.tar.gz"
+          # Notes are optional per release; the shared helper guarantees a non-empty body, generating
+          # a default when release-notes/<TAG>.md is absent (shipyard has no committed notes, and with
+          # a release per push it should not grow them for routine changes).
+          #
+          # It prints a PATH, not the content. Redirecting its stdout into the notes file would give
+          # the Release a body consisting of a temp-file path -- non-empty, so release-assets.sh would
+          # pass it, and the defect would only be visible on github.com.
+          notes_path="$(MAVERICKS_ROOT="$PWD" sh scripts/release-notes-file.sh "v$v" "$v" "Mavericks Shipyard")"
+          cp "$notes_path" dist/RELEASE_NOTES.md
+          [ -s dist/RELEASE_NOTES.md ] || { echo "::error::release notes came back empty"; exit 1; }
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shipyard-dist
+          path: dist
+
+  # Local `uses:` path -> THIS commit's publish workflow, and shipyard-ref pins the inner checkout of
+  # release-assets.sh to the same commit. Publishing with @v1 would ship a version using the previous
+  # version's tooling, unable to catch a defect in the tooling being shipped.
+  publish:
+    needs: build
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-release.yml
+    with:
+      version: v${{ needs.build.outputs.version }}
+      artifact: shipyard-dist
+      shipyard-ref: ${{ github.sha }}
+
+  # Consumers pin @v1 (moving) or @vX.Y.Z (exact). Moved only after publish succeeds, so @v1 never
+  # points at a version that failed to release.
+  major-tag:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Move the major tag
+        run: |
+          set -eu
+          major="v${{ needs.build.outputs.version }}"; major="${major%%.*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f -a "$major" -m "$major -> v${{ needs.build.outputs.version }}"
+          git push -f origin "$major"
+          echo "moved $major -> $(git rev-parse --short HEAD)"
