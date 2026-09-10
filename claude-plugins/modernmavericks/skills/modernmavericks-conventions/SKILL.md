@@ -224,6 +224,23 @@ waits for a green build. That only works if **your repo produces a CI status che
   check that never reports and **blocks every merge**. Without the required check, `allow_auto_merge` is
   inert and the PR merges only on Renovate's next scan (still gated, just not instant).
 
+**These two settings are the only conventions the gate cannot check — audit them.**
+`check-family-conventions.sh` reads a checkout, so every rule it enforces is file-shaped. "Allow
+auto-merge" and branch protection are GitHub repo state, reachable only through the API, and no
+`renovate.json` preset can set them. They drifted exactly that way: four repos created 2026-08-02 to
+08-04 had neither, so their Renovate bumps never merged — signal-desktop's Signal 8.26.0 sat green
+and unmerged for a month with nothing anywhere going red.
+
+Run `sh scripts/audit-repo-settings.sh` (needs `gh`, and admin — reading branch protection is
+admin-only, which is why this is not a CI gate). It prints both settings for every product repo and
+exits non-zero when a green bump could not merge.
+
+**Read the required context from a real check-run, never by analogy.** The context is the build job
+name, and the right one is a job that runs *on pull requests*. shipyard's own release job is named
+`build` but its workflow is push-only, so requiring `build` there would have blocked every PR
+forever; the PR-visible job is `test`, from `ci.yml`. Check first:
+`gh api repos/OWNER/REPO/commits/main/check-runs --jq '[.check_runs[].name]|unique'`
+
 **Every build ingredient must be able to auto-update — wire a customManager when the standard managers
 don't reach it.** An ingredient nobody tracks goes stale silently and nothing reports it: swift-runtime
 pinned `swift-toolchain` at `6.3.3-mavericks.1` while that repo shipped `.3`, for months, because
