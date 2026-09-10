@@ -38,6 +38,18 @@ runs:
           echo "::warning::no bats and no package manager to install it; *.bats tests will be skipped"
         fi
 
+        # Stamp the version before configuring. A used action is unpacked as a tarball with no .git,
+        # so shipyard-version.sh cannot count commits here and CMake would fall back to the bare line
+        # -- leaving every consumer with an installed shipyard that reports "1.0" and cannot be told
+        # apart from any other. The ref the consumer pinned is the identity that survives the tarball.
+        # Best-effort: an unresolvable ref (a raw SHA, a branch) still installs, just less precisely.
+        if ver="$(sh "$root/scripts/resolve-action-version.sh" "${{ github.action_ref }}" 2>&1)"; then
+          printf '%s\n' "$ver" > "$root/VERSION"
+          echo "shipyard version: $ver (from ${{ github.action_ref }})"
+        else
+          echo "::warning::could not resolve a shipyard version from ref '${{ github.action_ref }}' ($ver); installing with the bare line"
+        fi
+
         cmake -S "$root" -B "$RUNNER_TEMP/msc-build"
         cmake --install "$RUNNER_TEMP/msc-build" --prefix "$prefix"
         echo "installed mavericks-shipyard -> $prefix (registered in the CMake user package registry)"
