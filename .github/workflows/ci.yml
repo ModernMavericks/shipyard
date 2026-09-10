@@ -11,9 +11,13 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches-ignore: [main]   # main belongs to release.yml, which runs this same suite before it
+                              # publishes. Two workflows running it on main meant "the repo is red"
+                              # and "we published" were decided independently: ci.yml failed on four
+                              # consecutive commits while release.yml shipped v1.0.126 through .131
+                              # from those very trees.
   pull_request:
-    branches: [main]
+    branches: [main]          # the `test` job here is main's required status check
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,6 +28,11 @@ jobs:
     runs-on: macos-26   # the CMake modules gate on Apple clang; Linux cannot exercise them
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0      # shipyard-version.sh derives the patch from the commit count and
+                              # REFUSES a shallow clone rather than silently returning 1.0.1. Without
+                              # this the failure lands far from its cause: "installed package says
+                              # '1.0', derived version is ''", in a cmake test, nowhere near here.
 
       # Installs shipyard (this repo) and, incidentally, bats — which is what makes the *.bats
       # suites below actually run instead of reporting SKIP.
