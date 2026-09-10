@@ -601,6 +601,52 @@ its `main` — in the left column, that push is a release.
   **guaranteed non-empty** file, so use `build/release-notes-file.sh <TAG> <FULL>` which returns the
   committed note or generates a minimal default to a temp file (the appcast generator rejects empty notes).
 
+### A new upstream links upstream's own notes
+
+A `-mavericks.1` exists to deliver someone else's changes, so its notes must say where to read them —
+naming the new version is not enough. **Every port repo carries `build/upstream-release-notes-url.sh
+<upstream-version>`** (in `scripts/` instead, where the repo keeps its scripts there — the swift repos),
+which prints ONE URL: upstream's notes for exactly that version (the bare upstream version, `1.102.3`,
+not the `-mavericks.N` tag).
+
+- **Shipyard turns it into the section; the repo only answers "where".** `release-notes-file.sh`
+  appends `### Upstream` / `- [Upstream release notes for <ver>](<url>)` via `upstream-notes.sh`, ahead
+  of the ingredient facts. A repo that composes its notes itself calls `sh
+  "$SHIPYARD_SCRIPTS/upstream-notes.sh" "$VER"` and appends what it prints (tailscale's `release.yml`).
+- **Only for a NEW upstream.** `upstream-notes.sh` links when no *other* `<upstream>-mavericks.*` tag
+  exists, so a repackage gets nothing. It decides from the tags rather than the previous release,
+  because with parallel lines the previous release can be another line's. A shallow clone or a repo
+  whose tags it cannot list gets no section and a warning — never a false "new" — so the notes job
+  needs `fetch-depth: 0`.
+- **Usually one `printf`.** When upstream addresses its notes by version, that is the whole hook:
+  ```sh
+  #!/bin/sh
+  # Upstream Go's release notes for one version; shipyard's upstream-notes.sh links them.
+  set -eu
+  printf 'https://go.dev/doc/devel/release#go%s\n' "${1:?usage: upstream-release-notes-url.sh <upstream-version>}"
+  ```
+  Put the tag shape in the format string (`releases/tag/llvmorg-%s`, `releases/tag/v%s`). Check that
+  the URL — and its `#anchor`, if it has one — really exists for the current pin before committing it.
+- **Link what a reader can actually read.** A GitHub release page with an empty body is a link to
+  nothing: Swift publishes no notes for patch releases, so the swift repos link `CHANGELOG.md` at the
+  release tag instead. An upstream with no releases at all links the pinned commit's history
+  (ed25519: `commits/<UPSTREAM_COMMIT>` — the hook may read the repo's own pin, since a commit date
+  cannot be mapped back to a commit).
+- **No hook? Say why, in `INGREDIENTS.md`:** a line `No upstream release notes: <reason>`. That is
+  every repo that is its **own** upstream (porthole, macho-tools, shipyard) and a port with no single
+  upstream to point at (container-tools bundles six components, each an ingredient). A missing hook
+  with no stated reason reads as a repo that never adopted this.
+- **A script, not a URL template, because some upstreams cannot be addressed by version.** Tailscale's
+  changelog is anchored by *date* (`#2026-08-19-client`), so its hook fetches the page, finds the
+  client entry titled exactly `Tailscale v<version>`, and links that anchor. A hook like that: stays
+  10.9-safe sh (BWK awk — it runs wherever notes are generated); is tested against a **fixture** of the
+  real page, not the network; and when it cannot find the specific entry (no entry for that release,
+  page unreachable) prints a less specific but working URL and says why on stderr.
+- **Never fails a release.** No hook, a failing hook, or output that is not exactly one `http(s)` URL
+  → no section, a warning on stderr. Notes are prose.
+- `gen_appcast.sh` renders `[text](scheme:url)` and `### ` headings for the Sparkle `<description>`;
+  write notes links in that form, not as bare URLs.
+
 ## Consuming a ModernMavericks toolchain + auto-propagation
 
 A repo built WITH another MM product (e.g. the go126 toolchain) pins it in a **file** (not workflow env),
@@ -904,7 +950,8 @@ in the same commit.
    legacysupport/golang.
 4. `release.yml`: pick a release model; three triggers; `ver` step with the non-main guard; `gh release
    create`; `cancel-in-progress: false` if auto-cutting.
-5. `release-notes/README.md`; Sparkle updater target; `SPARKLE_PRIVATE_KEY` secret.
+5. `release-notes/README.md`; `build/upstream-release-notes-url.sh` (a port: where upstream's notes
+   for a version live — see Release notes); Sparkle updater target; `SPARKLE_PRIVATE_KEY` secret.
 6. Choose the upstream-verification method; note it if it deviates from a sibling.
 7. If the repo bakes in build ingredients (anything it's built WITH, not the upstream it ports): make
    each pin a **file**, give each a Renovate customManager, add the `repackage-on-ingredient-bump`

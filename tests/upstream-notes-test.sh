@@ -20,6 +20,17 @@ out="$(sh "$S" 1.1.0-mavericks.1)"
 mkdir -p build
 printf '#!/bin/sh\nprintf "https://example.com/releases/v%%s\\n" "$1"\n' > build/upstream-release-notes-url.sh
 
+# a repo that keeps its scripts in scripts/ (the swift repos) keeps the hook there too; build/ wins
+mkdir -p scripts
+printf '#!/bin/sh\nprintf "https://example.com/from-scripts/%%s\\n" "$1"\n' > scripts/upstream-release-notes-url.sh
+mv build/upstream-release-notes-url.sh build/hook.keep
+out="$(sh "$S" 1.1.0-mavericks.1)"
+printf '%s\n' "$out" | grep -qF 'https://example.com/from-scripts/1.1.0' || { echo "FAIL scripts/: $out"; exit 1; }
+mv build/hook.keep build/upstream-release-notes-url.sh
+out="$(sh "$S" 1.1.0-mavericks.1)"
+printf '%s\n' "$out" | grep -qF 'https://example.com/releases/v1.1.0' || { echo "FAIL build/ should win: $out"; exit 1; }
+rm -r scripts
+
 # a repackage of an upstream already shipped -> nothing
 out="$(sh "$S" 1.0.0-mavericks.3)"
 [ -z "$out" ] || { echo "FAIL repackage: got '$out'"; exit 1; }

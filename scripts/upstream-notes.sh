@@ -5,7 +5,7 @@
 # named the new version without saying where to read what changed.
 #
 # WHERE upstream publishes notes is per-repo, so the repo answers it: build/upstream-release-notes-url.sh
-# <upstream-version> prints ONE URL. Usually a printf; tailscale's finds a date anchor in a changelog.
+# (or scripts/…) <upstream-version> prints ONE URL. Usually a printf; tailscale's finds a date anchor.
 # A script rather than a URL template because some upstreams cannot be addressed by version alone.
 #
 # Prints NOTHING for a repackage, for a repo without the hook (not adopted yet, or a self-upstream
@@ -24,8 +24,15 @@ SELF="$(cd "$(dirname "$0")" && pwd)"
 ver="${1:?upstream-notes: version required}"
 up="${ver%%-mavericks.*}"
 
-hook="$MAVERICKS_ROOT/build/upstream-release-notes-url.sh"
-[ -f "$hook" ] || exit 0
+# build/ where a repo keeps its scripts there, scripts/ where it keeps them there (the swift repos) --
+# the same two homes derive-upstream-version.sh already has.
+hook=""
+for d in build scripts; do
+  if [ -f "$MAVERICKS_ROOT/$d/upstream-release-notes-url.sh" ]; then
+    hook="$MAVERICKS_ROOT/$d/upstream-release-notes-url.sh"; break
+  fi
+done
+[ -n "$hook" ] || exit 0
 
 # Tags we cannot see must not read as "no earlier release", or every repackage gets called new. A
 # shallow clone has none (the family's release jobs use fetch-depth: 0 for exactly this), and a git
