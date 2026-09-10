@@ -49,8 +49,11 @@ fast: on 2026-09-09 a defect in conventions check 7d reddened two repos within t
 
 Since shipyard cuts `vLINE.COUNT` on every push (`scripts/shipyard-version.sh`), every one of those
 pushes is a real, downloadable, pinnable release. So when `@v1` breaks you and you cannot wait for a
-fix, pin the previous version — `uses: ModernMavericks/shipyard/.github/workflows/family-conventions.yml@v1.0.121`
-— and move back to `@v1` afterwards. Say why in the diff, so the pin has an exit.
+fix, pin the previous version — `uses: ModernMavericks/shipyard/.github/workflows/family-conventions.yml@v1.0.<N>`,
+where `<N>` is a real patch number from `gh release list -R ModernMavericks/shipyard` (pick the release
+before the bad one) — and move back to `@v1` afterwards. Say why in the diff, so the pin has an exit.
+Never copy a specific `<N>` from this doc: the count advances on every push to shipyard's `main`, so
+any literal written here is stale by the time you read it — always look up the current one.
 
 `gh release list -R ModernMavericks/shipyard` shows what is available;
 `gh api repos/ModernMavericks/shipyard/git/ref/tags/v1 --jq .object.sha` says where `@v1` points now.

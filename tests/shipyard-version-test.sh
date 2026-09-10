@@ -42,4 +42,14 @@ fi
 sh scripts/shipyard-version.sh 2>&1 | grep -qi 'line' \
   || { echo "FAIL: the refusal should say UPSTREAM_VERSION holds the LINE"; exit 1; }
 
+# A shallow clone has HEAD but not the history behind it: `rev-list --count` would silently return 1,
+# colliding with the already-published v1.0.1. Refuse rather than mint a wrong, immutable tag.
+git clone -q --depth 1 "file://$work/a" "$work/shallow"
+cd "$work/shallow"
+if sh scripts/shipyard-version.sh >/dev/null 2>&1; then
+  echo "FAIL: a shallow clone should be refused, not guessed at"; exit 1
+fi
+sh scripts/shipyard-version.sh 2>&1 | grep -qi 'shallow' \
+  || { echo "FAIL: the refusal should say the clone is shallow"; exit 1; }
+
 echo "PASS: shipyard-version"

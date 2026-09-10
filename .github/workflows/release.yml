@@ -72,7 +72,11 @@ jobs:
           set -eu
           v='${{ steps.ver.outputs.version }}'
           mkdir -p dist "$RUNNER_TEMP/stage/shipyard-$v"
-          # Exactly what `cmake --install` lays down, so the asset and the install agree.
+          # Deliberately a buildable SOURCE TREE, not `cmake --install`'s output: it carries
+          # CMakeLists.txt, UPSTREAM_VERSION, VERSION and default.json (which an install doesn't
+          # lay down) and omits the generated MavericksShipyardConfigVersion.cmake (there's no
+          # build yet to generate it from). A consumer builds/installs from this; it is not the
+          # install layout.
           cp -R CMakeLists.txt UPSTREAM_VERSION VERSION default.json mavericks-presets.json \
                 scripts updater "$RUNNER_TEMP/stage/shipyard-$v/"
           cp ./*.cmake "$RUNNER_TEMP/stage/shipyard-$v/"
