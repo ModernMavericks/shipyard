@@ -76,7 +76,7 @@ jobs:
         run: |
           set -u
           set +e   # the step runs under bash -e; the scanner's exit status is the answer, not a crash
-          python3 .shipyard/scripts/scan_for_key.py logs/* dist/*
+          python3 .shipyard/scripts/scan_for_key.py logs dist   # directories: every file, all the way down
           rc=$?
           set -e
           case $rc in
@@ -87,7 +87,7 @@ jobs:
             *) echo "::error::could not scan for the signing key -- refusing to call that a pass"; exit 1 ;;
           esac
           { printf 'scanned %s finished job log(s) and %s release file(s) of run %s; no piece of the signing key\n' \
-              "$(ls logs | wc -l | tr -d ' ')" "$(ls dist | wc -l | tr -d ' ')" "$GITHUB_RUN_ID"; } > sparkle-key-scan.txt
+              "$(find logs -type f | wc -l | tr -d ' ')" "$(find dist -type f | wc -l | tr -d ' ')" "$GITHUB_RUN_ID"; } > sparkle-key-scan.txt
           cat sparkle-key-scan.txt
 
       - uses: actions/upload-artifact@v7

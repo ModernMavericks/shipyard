@@ -64,6 +64,20 @@ plant() {  # TEXT -- a log with TEXT on its third line
 
 # The public half is printed on purpose (assert_update_trusted.sh names the keys it checks), and
 # knowing it helps no one sign.
+# A release artifact is a tree, not a flat list: openssh's carries dist/pkg-scripts/, and the first
+# real scan refused to call "Is a directory" a pass -- correctly, but it had scanned nothing.
+@test "a directory is scanned file by file, all the way down" {
+  mkdir -p "$T/dist/pkg-scripts/deeper"
+  echo 'clean notes' > "$T/dist/RELEASE_NOTES.md"
+  printf 'x %s x\n' "$(slice 10 12 b64)" > "$T/dist/pkg-scripts/deeper/postinstall"
+  run --separate-stderr scan "$T/dist"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"pkg-scripts/deeper/postinstall:1"* ]] || false
+  rm "$T/dist/pkg-scripts/deeper/postinstall"
+  run --separate-stderr scan "$T/dist"
+  [ "$status" -eq 0 ]
+}
+
 @test "the public half alone is not a leak" {
   plant "$(slice 64 32 b64)"
   run --separate-stderr scan "$T/leak.log"

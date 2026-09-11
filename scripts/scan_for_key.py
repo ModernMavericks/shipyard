@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Fail when any FILE carries a piece of $SPARKLE_PRIVATE_KEY -- saying where, never what.
 
-    SPARKLE_PRIVATE_KEY=... scan_for_key.py FILE...
+    SPARKLE_PRIVATE_KEY=... scan_for_key.py FILE|DIR...
 
-Exit 0 when no file carries any, 1 when one does, 2 when it cannot look (no key, unreadable file).
+A directory is scanned file by file, all the way down: a release artifact is a tree (openssh's carries
+dist/pkg-scripts/). Exit 0 when no file carries any, 1 when one does, 2 when it cannot look (no key,
+an unreadable file).
 
 GitHub masks the literal secret in a log, and nothing else: a trace, a slice, a hex dump or a
 re-encoding goes out as-is, and a public repo's logs are public. So this looks for every 12-byte
@@ -62,6 +64,18 @@ def patterns(secret):
     return pats
 
 
+def files_under(paths):
+    """Each named file, and every file beneath each named directory, in a stable order."""
+    for path in paths:
+        if os.path.isdir(path):
+            for root, dirs, names in os.walk(path):
+                dirs.sort()
+                for name in sorted(names):
+                    yield os.path.join(root, name)
+        else:
+            yield path
+
+
 def main(argv):
     if not os.environ.get("SPARKLE_PRIVATE_KEY", "").strip() or len(argv) < 2:
         print("scan_for_key: usage: SPARKLE_PRIVATE_KEY=... scan_for_key.py FILE... "
@@ -69,7 +83,7 @@ def main(argv):
         return 2
     pats = patterns(secret_bytes(os.environ["SPARKLE_PRIVATE_KEY"]))
     found = False
-    for path in argv[1:]:
+    for path in files_under(argv[1:]):
         try:
             with open(path, "rb") as f:
                 data = f.read()
