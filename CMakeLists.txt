@@ -139,6 +139,11 @@ add_test(NAME standalone-include
 add_test(NAME umbrella-langs
   COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/umbrella-langs.sh ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Both configure a scratch consumer through shipyard-cmake (MavericksShipyardConfig.cmake
+# refuses any other cmake) and exit 77 to SKIP when none is reachable -- a box that hasn't
+# installed the shipyard pkg. Without this, ctest counts a 77 exit as Failed, not Skipped.
+set_tests_properties(standalone-include umbrella-langs PROPERTIES SKIP_RETURN_CODE 77)
+
 # Prove stage_updater.sh stages an updater .app + LaunchAgent and renders the templates.
 add_test(NAME stage-updater
   COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/stage_updater.sh ${CMAKE_CURRENT_SOURCE_DIR})

@@ -16,6 +16,10 @@
 # MacPorts', pkgsrc's, CMake.app's -- even pointed here on purpose) is refused: nothing may depend on a
 # cmake shipyard did not build. CMAKE_COMMAND is the resolved real path, so the check is not fooled by
 # a symlink named shipyard-cmake. An exception is a declared conventions deviation, not a flag.
+# This is a guardrail, not a sandbox (spec 2026-09-11, R-P1-13): CMAKE_COMMAND is an ordinary
+# variable, so someone determined enough can point it at any prefix that happens to hold a
+# shipyard, same as they could just edit this file -- the check exists to catch the wrong cmake
+# reaching here BY ACCIDENT, which is how the real drift happens, not to stop deliberate abuse.
 get_filename_component(_shipyard_cmake_bin "${CMAKE_COMMAND}" DIRECTORY)
 get_filename_component(_shipyard_cmake_prefix "${_shipyard_cmake_bin}" DIRECTORY)
 if(NOT EXISTS "${_shipyard_cmake_prefix}/share/cmake/MavericksShipyard/MavericksShipyardConfig.cmake")
