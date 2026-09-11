@@ -5,13 +5,22 @@
 #
 # Usage (SPARKLE_PRIVATE_KEY must be in the environment):
 #   sign_and_appcast.sh --channel-title T --version V --pkg-url URL \
-#     --notes-file FILE --pkg PKG [--signer BIN] [--min-os 10.9.5]  > appcast.xml
+#     --notes-file FILE --pkg PKG [--signer BIN] [--verifier BIN] [--min-os 10.9.5] \
+#     [--pubkey B64] [--allow-key-change]  > appcast.xml
 #
-#   --signer   the ed25519-sign binary; OPTIONAL -- defaults to the prebuilt ed25519-sign fetched from
-#              the latest mavericks-ed25519 release (needs gh). Pass a path to use a specific one.
-#   --pkg      the .pkg to sign
-#   --pkg-url  the URL the enclosure will point at (the release-asset download URL)
-#   others     passed through to gen_appcast.sh
+#   --signer    the ed25519-sign binary; OPTIONAL -- defaults to the prebuilt ed25519-sign fetched from
+#               the latest mavericks-ed25519 release (needs gh). Pass a path to use a specific one.
+#   --verifier  the ed25519-verify binary; OPTIONAL -- defaults to the one beside the signer (the
+#               ed25519 release ships both).
+#   --pkg       the .pkg to sign
+#   --pkg-url   the URL the enclosure will point at (the release-asset download URL)
+#   --pubkey, --allow-key-change   passed to assert_update_trusted.sh (see below)
+#   others      passed through to gen_appcast.sh
+#
+# After signing, assert_update_trusted.sh proves the clients ALREADY INSTALLED will accept the
+# signature -- against the key in the live release's updater, not the repo's .pub -- and no appcast
+# is emitted if they would not. The signer's own self-check cannot tell: it verifies against the
+# public half of whatever key it was handed.
 #
 # The private key is read from $SPARKLE_PRIVATE_KEY and reaches the signer only on its stdin, via
 # `printenv SPARKLE_PRIVATE_KEY |`: this script never lets the shell expand the key into a command.
@@ -24,10 +33,13 @@
 set -eu
 SELF="$(cd "$(dirname "$0")" && pwd)"
 
-SIGNER=""; CHANNEL=""; VER=""; URL=""; NOTES=""; PKG=""; MINOS="${MAVERICKS_MIN_OS:-10.9.5}"
+SIGNER=""; VERIFIER=""; PUBKEY=""; ALLOW_CHANGE=no; CHANNEL=""; VER=""; URL=""; NOTES=""; PKG=""; MINOS="${MAVERICKS_MIN_OS:-10.9.5}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --signer) SIGNER="$2"; shift 2;;
+    --verifier) VERIFIER="$2"; shift 2;;
+    --pubkey) PUBKEY="$2"; shift 2;;
+    --allow-key-change) ALLOW_CHANGE=yes; shift;;
     --channel-title) CHANNEL="$2"; shift 2;;
     --version) VER="$2"; shift 2;;
     --pkg-url) URL="$2"; shift 2;;
@@ -61,13 +73,22 @@ if [ -z "$SIGNER" ]; then
     || { echo "sign_and_appcast: could not expand the ed25519 .pkg" >&2; exit 1; }
   SIGNER=$(find "$_dl/x" -type f -name ed25519-sign | head -1)
   [ -n "$SIGNER" ] && chmod +x "$SIGNER"
+  [ -f "$(dirname "$SIGNER")/ed25519-verify" ] && chmod +x "$(dirname "$SIGNER")/ed25519-verify"
 fi
 [ -x "$SIGNER" ] || { echo "sign_and_appcast: signer not executable: $SIGNER" >&2; exit 1; }
+# The check below is not optional, so neither is a verifier: no ed25519-verify means no appcast.
+[ -n "$VERIFIER" ] || VERIFIER="$(dirname "$SIGNER")/ed25519-verify"
+[ -x "$VERIFIER" ] || { echo "sign_and_appcast: no ed25519-verify at $VERIFIER (pass --verifier)" >&2; exit 1; }
 
 # ed25519-sign (-f - <pkg>: key on stdin) prints the bare base64 signature; assemble the Sparkle
 # enclosure attrs (edSignature + length) from it and the pkg's byte size.
 SIG=$(printenv SPARKLE_PRIVATE_KEY | "$SIGNER" -f - "$PKG")
 [ -n "$SIG" ] || { echo "sign_and_appcast: signer produced no signature" >&2; exit 1; }
+set -- --pkg "$PKG" --signature "$SIG" --verifier "$VERIFIER"
+[ -z "$PUBKEY" ] || set -- "$@" --pubkey "$PUBKEY"
+[ "$ALLOW_CHANGE" = no ] || set -- "$@" --allow-key-change
+sh "$SELF/assert_update_trusted.sh" "$@" \
+  || { echo "sign_and_appcast: no appcast -- installed clients would not accept this signature" >&2; exit 1; }
 LEN=$(wc -c < "$PKG" | tr -d '[:space:]')
 ENC="sparkle:edSignature=\"$SIG\" length=\"$LEN\""
 

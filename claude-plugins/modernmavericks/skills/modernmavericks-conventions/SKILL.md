@@ -765,6 +765,20 @@ signal (see the auto-merge intent above — fix runtime regressions in `-maveric
   `[ -n "$SPARKLE_PRIVATE_KEY" ]` (a trace prints it — use `printenv SPARKLE_PRIVATE_KEY | grep -q .`),
   and never decode, slice, or write it anywhere. Until 2026-09-10 the key was an argv to
   `ed25519-sign -s`, beside a comment saying it never was.
+- **A signature must satisfy the clients ALREADY INSTALLED — checked before the appcast exists.** A
+  Sparkle client verifies against the `SUPublicEDKey` of the updater it has, which came from the pkg
+  the feed offered last time: not the repo's `.pub`, and not the key the new pkg ships.
+  `ed25519-sign`'s self-check can't see a mismatch (it checks against the public half of the key it
+  was handed), so `sign_and_appcast.sh` runs `assert_update_trusted.sh` after signing: it reads the
+  new pkg's `SUFeedURL`, fetches that live feed's enclosure pkg, and `ed25519-verify`s the new
+  signature against *that* pkg's updater key (`updater_pubkey.sh` reads a pkg's key and feed). No
+  appcast is emitted on a refusal. A first release (feed 404) is checked against the new pkg's own
+  key; a feed that can't be *read* fails closed rather than pretend to be a first release.
+  - **Changing a product's key** (e.g. moving to the org-wide key): ship the new `.pub` in a **bridge
+    release signed with the OLD key** — the check passes and says the next release needs the new
+    key — then switch `SPARKLE_PRIVATE_KEY` after it publishes. Swapping key and secret together
+    fails the check, because every installed updater would reject that release. Only a deliberate
+    decision to strand installed clients passes `--allow-key-change`, and the workflow must say why.
 - **A menu/systray "Check for Updates" MUST launch the updater via LaunchServices, not fork+exec.** Run
   `/usr/bin/open "<…>/ProductUpdater.app" --args --user`, NOT `NSTask`/`exec.Command` on the executable
   inside `Contents/MacOS`. Sparkle's package install runs its privileged helper via

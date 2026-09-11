@@ -19,6 +19,10 @@ cat > "$T/sign" <<EOF
 echo "$SIG"
 EOF
 chmod +x "$T/sign"
+# ...and ed25519-verify beside it, where sign_and_appcast.sh looks. This test is about the appcast,
+# not about trust (tests/sign_and_appcast_trust.bats), so it always verifies, against --pubkey.
+printf '#!/bin/sh\nexit 0\n' > "$T/ed25519-verify"
+chmod +x "$T/ed25519-verify"
 
 printf 'dummy pkg bytes\n' > "$T/x.pkg"
 printf '## Notes\n\n- thing one\n- thing two\n' > "$T/notes.md"
@@ -26,7 +30,7 @@ LEN=$(wc -c < "$T/x.pkg" | tr -d '[:space:]')
 
 OUT=$(SPARKLE_PRIVATE_KEY="ignored-by-stub" sh "$ROOT/scripts/sign_and_appcast.sh" \
   --signer "$T/sign" --channel-title "Test Channel" --version 1.2.3 \
-  --pkg-url "https://example.invalid/x.pkg" --notes-file "$T/notes.md" --pkg "$T/x.pkg")
+  --pkg-url "https://example.invalid/x.pkg" --notes-file "$T/notes.md" --pkg "$T/x.pkg" --pubkey stub)
 
 fail() { echo "sign_and_appcast test: $1" >&2; exit 1; }
 printf '%s\n' "$OUT" | grep -q "sparkle:edSignature=\"$SIG\"" || fail "signer's signature not in the enclosure"
