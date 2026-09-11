@@ -6,9 +6,11 @@
 # Rules: identical files are copied; files Mach-O in both that differ are lipo -create'd; a
 # non-Mach-O difference is refused unless declared with --allow-differ (A's copy wins); a file in only
 # one tree is refused. Anything else differing means these are not two slices of one build.
-#   usage: lipo-merge-tree.sh --a DIR --b DIR --out DIR [--allow-differ RELPATH]...
+#   usage: lipo-merge-tree.sh --a DIR --b DIR --out DIR [--allow-differ RELPATH]... [--require-archs "ARCH ..."]
+# The --require-archs option (space-separated architecture names) mandates that every regular Mach-O
+# file in the output contains all specified architectures. If any file lacks an arch, refuse and remove OUT.
 set -eu
-A=""; B=""; OUT=""; ALLOW=""
+A=""; B=""; OUT=""; ALLOW=""; ARCHS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --a) A="${2%/}"; shift 2;;
@@ -16,22 +18,25 @@ while [ $# -gt 0 ]; do
     --out) OUT="${2%/}"; shift 2;;
     --allow-differ) ALLOW="$ALLOW
 $2"; shift 2;;
+    --require-archs) ARCHS="$2"; shift 2;;
     *) echo "lipo-merge-tree: unknown option $1" >&2; exit 2;;
   esac
 done
 [ -d "$A" ] && [ -d "$B" ] && [ -n "$OUT" ] || { echo "lipo-merge-tree: need --a DIR --b DIR --out DIR" >&2; exit 2; }
 [ ! -e "$OUT" ] || { echo "lipo-merge-tree: $OUT already exists" >&2; exit 2; }
+work="$(mktemp -d "${TMPDIR:-/tmp}/lipo-merge-tree.XXXXXX")"
+trap 'rm -rf "$work" "$OUT"' EXIT
 
 is_macho() { lipo -info "$1" >/dev/null 2>&1; }
 allowed() { printf '%s\n' "$ALLOW" | grep -Fqx -- "$1"; }
+has_arch() { lipo -info "$1" | grep -q "$2"; }
 
 # Every path must exist in both trees.
-( cd "$A" && find . \( -type f -o -type l \) | sort ) > "${TMPDIR:-/tmp}/lmt-a.$$"
-( cd "$B" && find . \( -type f -o -type l \) | sort ) > "${TMPDIR:-/tmp}/lmt-b.$$"
-trap 'rm -f "${TMPDIR:-/tmp}/lmt-a.$$" "${TMPDIR:-/tmp}/lmt-b.$$"' EXIT
-if ! cmp -s "${TMPDIR:-/tmp}/lmt-a.$$" "${TMPDIR:-/tmp}/lmt-b.$$"; then
+( cd "$A" && find . \( -type f -o -type l \) | sort ) > "$work/lmt-a"
+( cd "$B" && find . \( -type f -o -type l \) | sort ) > "$work/lmt-b"
+if ! cmp -s "$work/lmt-a" "$work/lmt-b"; then
   echo "lipo-merge-tree: the trees do not hold the same files:" >&2
-  diff "${TMPDIR:-/tmp}/lmt-a.$$" "${TMPDIR:-/tmp}/lmt-b.$$" >&2 || true
+  diff "$work/lmt-a" "$work/lmt-b" >&2 || true
   exit 1
 fi
 
@@ -53,6 +58,24 @@ while IFS= read -r rel; do
     echo "lipo-merge-tree: $rel differs and is not Mach-O; refusing (declare it with --allow-differ if that is expected)" >&2
     bad=1
   fi
-done < "${TMPDIR:-/tmp}/lmt-a.$$"
-[ "$bad" -eq 0 ] || { rm -rf "$OUT"; exit 1; }
+done < "$work/lmt-a"
+[ "$bad" -eq 0 ] || exit 1
+
+# Validate --require-archs if specified.
+if [ -n "$ARCHS" ]; then
+  while IFS= read -r rel; do
+    rel="${rel#./}"; fo="$OUT/$rel"
+    [ -L "$fo" ] && continue  # skip symlinks
+    [ -f "$fo" ] || continue  # skip directories
+    is_macho "$fo" || continue  # skip non-Mach-O files
+    for arch in $ARCHS; do
+      if ! has_arch "$fo" "$arch"; then
+        echo "lipo-merge-tree: $rel is missing arch $arch" >&2
+        exit 1
+      fi
+    done
+  done < "$work/lmt-a"
+fi
+
+trap 'rm -rf "$work"' EXIT
 echo "lipo-merge-tree: $A + $B -> $OUT" >&2

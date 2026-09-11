@@ -34,14 +34,38 @@ lipo -info "$w/o2/bin/tool" | grep -q 'i386' && lipo -info "$w/o2/bin/tool" | gr
 [ "$(cat "$w/o2/share/x/data.txt")" = same ] || { echo "FAIL: identical files must be copied"; exit 1; }
 [ -L "$w/o2/bin/tool-link" ] || { echo "FAIL: symlinks must stay symlinks"; exit 1; }
 
-# Identical Mach-O (e.g. an already-fat framework both builds embed) is copied, not re-lipo'd.
+# Identical thin x86_64 is refused when --require-archs demands both.
 mk "$w/c" "$w/m-x86_64"; mk "$w/d" "$w/m-x86_64"
-sh "$S" --a "$w/c" --b "$w/d" --out "$w/o3" >/dev/null \
-  || { echo "FAIL: identical trees must merge"; exit 1; }
+if sh "$S" --a "$w/c" --b "$w/d" --out "$w/o3" --require-archs "i386 x86_64" >/dev/null 2>&1; then
+  echo "FAIL: identical thin x86_64 with --require-archs \"i386 x86_64\" must be refused"; exit 1
+fi
+[ ! -d "$w/o3" ] || { echo "FAIL: failed merge must not leave OUT dir"; exit 1; }
+
+# i386+x86_64 merge with --require-archs passes.
+sh "$S" --a "$w/a" --b "$w/b" --out "$w/o4" --allow-differ App.app/Contents/Info.plist --require-archs "i386 x86_64" >/dev/null
+lipo -info "$w/o4/bin/tool" | grep -q 'i386' && lipo -info "$w/o4/bin/tool" | grep -q 'x86_64' \
+  || { echo "FAIL: o4/bin/tool is not universal: $(lipo -info "$w/o4/bin/tool")"; exit 1; }
+
+# Genuinely fat identical file (created with lipo -create) passes --require-archs.
+lipo -create "$w/m-i386" "$w/m-x86_64" -output "$w/m-fat"
+mk "$w/e" "$w/m-fat"; mk "$w/f" "$w/m-fat"
+sh "$S" --a "$w/e" --b "$w/f" --out "$w/o5" --require-archs "i386 x86_64" >/dev/null \
+  || { echo "FAIL: identical fat frameworks must merge"; exit 1; }
+lipo -info "$w/o5/bin/tool" | grep -q 'i386' && lipo -info "$w/o5/bin/tool" | grep -q 'x86_64' \
+  || { echo "FAIL: o5/bin/tool is not universal: $(lipo -info "$w/o5/bin/tool")"; exit 1; }
+
+# Two different same-arch Mach-O files fail and leave no OUT.
+printf 'int main(void){return 1;}\n' > "$w/m2.c"
+clang -arch x86_64 -o "$w/m2-x86_64" "$w/m2.c"
+mk "$w/g" "$w/m-x86_64"; mk "$w/h" "$w/m2-x86_64"
+if sh "$S" --a "$w/g" --b "$w/h" --out "$w/o6" >/dev/null 2>&1; then
+  echo "FAIL: different x86_64 files must fail lipo"; exit 1
+fi
+[ ! -d "$w/o6" ] || { echo "FAIL: failed lipo must not leave OUT dir"; exit 1; }
 
 # A file in only one tree is refused.
-mk "$w/e" "$w/m-x86_64"; mk "$w/f" "$w/m-i386"; echo extra > "$w/e/share/x/only-in-a"
-if sh "$S" --a "$w/e" --b "$w/f" --out "$w/o4" >/dev/null 2>&1; then
+mk "$w/i" "$w/m-x86_64"; mk "$w/j" "$w/m-i386"; echo extra > "$w/i/share/x/only-in-a"
+if sh "$S" --a "$w/i" --b "$w/j" --out "$w/o7" >/dev/null 2>&1; then
   echo "FAIL: a file missing from one tree must be refused"; exit 1
 fi
 
