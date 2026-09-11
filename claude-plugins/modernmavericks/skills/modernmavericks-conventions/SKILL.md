@@ -756,6 +756,15 @@ signal (see the auto-merge intent above — fix runtime regressions in `-maveric
   circularity — assert with `otool -L`). EdDSA-signed; private key is the `SPARKLE_PRIVATE_KEY` secret.
 - `mavericks_add_updater_app()` self-fetches the Sparkle framework at configure time; signing/appcast use
   the shared `sign_and_appcast.sh` (fetches `ed25519-sign` via `gh` → needs `GH_TOKEN`).
+- **The signing key never meets a command line or a trace.** A public repo's Actions logs are public,
+  and GitHub masks only the *literal* secret: a trace, a slice or a re-encoding goes out as-is.
+  `sign_and_appcast.sh` feeds the key to `ed25519-sign -f -` with `printenv SPARKLE_PRIVATE_KEY |`, so
+  the shell never expands it — neither `ps` nor `sh -x` can show it — and
+  `tests/sign_and_appcast_key.bats` runs it under `sh -x` and fails on any 16-character piece of the
+  key. In anything of your own: never put `$SPARKLE_PRIVATE_KEY` in a command, not even
+  `[ -n "$SPARKLE_PRIVATE_KEY" ]` (a trace prints it — use `printenv SPARKLE_PRIVATE_KEY | grep -q .`),
+  and never decode, slice, or write it anywhere. Until 2026-09-10 the key was an argv to
+  `ed25519-sign -s`, beside a comment saying it never was.
 - **A menu/systray "Check for Updates" MUST launch the updater via LaunchServices, not fork+exec.** Run
   `/usr/bin/open "<…>/ProductUpdater.app" --args --user`, NOT `NSTask`/`exec.Command` on the executable
   inside `Contents/MacOS`. Sparkle's package install runs its privileged helper via
@@ -988,6 +997,10 @@ it here.** A silently dropped increment is how the family drifted in the first p
 - [x] Automerge policy stated in the preset — done 2026-07-30. **Ship-if-green**: patch, minor and
       major automerge once the build passes; fix forward in a `-mavericks.N+1` release. Exceptions
       only where a bad bump would build fine and be wrong, and the gate demands the reason
+- [ ] **Remove `ed25519-sign -s`** (the key as an argv; it warns meanwhile). Exit condition: this
+      repo's `sign_and_appcast.sh` passes the key with `-f -` on `main` AND mavericks-ed25519 has
+      released a `-f`-capable `ed25519-sign` — `sign_and_appcast.sh` signs with the *latest* ed25519
+      release, so dropping `-s` any earlier breaks every product's signing. Transitional since 2026-09-10
 - [ ] **North star, not yet designed:** should a product repo carry build machinery at all? One
       declarative config per repo (upstream, verification, binaries, ingredients, updater) that
       shipyard turns into the build, package, release, and checks — a repo that cannot express a

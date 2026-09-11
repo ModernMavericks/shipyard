@@ -13,9 +13,14 @@
 #   --pkg-url  the URL the enclosure will point at (the release-asset download URL)
 #   others     passed through to gen_appcast.sh
 #
-# The private key is read from $SPARKLE_PRIVATE_KEY (never an argv, so it stays out of `ps`/logs).
-# The signer self-checks the signature against the key's public half, so a mismatched key fails here,
-# not on the client at install time.
+# The private key is read from $SPARKLE_PRIVATE_KEY and reaches the signer only on its stdin, via
+# `printenv SPARKLE_PRIVATE_KEY |`: this script never lets the shell expand the key into a command.
+# That keeps it out of the signer's argv (visible to anything that can list processes) and out of
+# `sh -x` traces, which print every expanded command -- GitHub masks the literal secret in a log,
+# but nothing masks what a trace or a re-encoding prints. tests/sign_and_appcast_key.bats runs this
+# under `sh -x` and fails on any piece of the key in the output. Until this used printenv, the key
+# was an argv here (behind a comment claiming it never was), and even the "is it set?" test below
+# printed it under a trace.
 set -eu
 SELF="$(cd "$(dirname "$0")" && pwd)"
 
@@ -35,7 +40,9 @@ done
 [ -n "$CHANNEL" ] && [ -n "$VER" ] && [ -n "$URL" ] && [ -n "$NOTES" ] && [ -n "$PKG" ] \
   || { echo "sign_and_appcast: need --channel-title --version --pkg-url --notes-file --pkg" >&2; exit 2; }
 [ -f "$PKG" ] || { echo "sign_and_appcast: no pkg: $PKG" >&2; exit 1; }
-[ -n "${SPARKLE_PRIVATE_KEY:-}" ] || { echo "sign_and_appcast: SPARKLE_PRIVATE_KEY not set" >&2; exit 1; }
+# grep -q . reads the key without printing it, and fails on unset (printenv) and empty (grep) alike.
+printenv SPARKLE_PRIVATE_KEY | grep -q . \
+  || { echo "sign_and_appcast: SPARKLE_PRIVATE_KEY not set" >&2; exit 1; }
 
 # --signer is optional: default to the prebuilt ed25519-sign from the latest mavericks-ed25519 release.
 # (ed25519 signatures are standard + deterministic, so the tool version doesn't change the output.)
@@ -57,9 +64,9 @@ if [ -z "$SIGNER" ]; then
 fi
 [ -x "$SIGNER" ] || { echo "sign_and_appcast: signer not executable: $SIGNER" >&2; exit 1; }
 
-# ed25519-sign (-s <key> <pkg>) prints the bare base64 signature; assemble the Sparkle enclosure
-# attrs (edSignature + length) from it and the pkg's byte size.
-SIG=$("$SIGNER" -s "$SPARKLE_PRIVATE_KEY" "$PKG")
+# ed25519-sign (-f - <pkg>: key on stdin) prints the bare base64 signature; assemble the Sparkle
+# enclosure attrs (edSignature + length) from it and the pkg's byte size.
+SIG=$(printenv SPARKLE_PRIVATE_KEY | "$SIGNER" -f - "$PKG")
 [ -n "$SIG" ] || { echo "sign_and_appcast: signer produced no signature" >&2; exit 1; }
 LEN=$(wc -c < "$PKG" | tr -d '[:space:]')
 ENC="sparkle:edSignature=\"$SIG\" length=\"$LEN\""

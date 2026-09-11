@@ -11,7 +11,8 @@ ROOT="$1"
 T=$(mktemp -d "${TMPDIR:-/tmp}/mav-signappcast.XXXXXX")
 trap 'rm -rf "$T"' EXIT
 
-# stub ed25519-sign: -s <key> <file> -> a fixed, well-formed base64 signature on stdout.
+# stub ed25519-sign: -f - <file> (key on stdin) -> a fixed, well-formed base64 signature on stdout.
+# (How the key reaches the signer is tests/sign_and_appcast_key.bats's concern.)
 SIG="c3R1YnNpZ25hdHVyZWZvcnRlc3Rpbmdvbmx5QUFBQUFBQUFBQUFBQUFBQUFBQUFBQT09"
 cat > "$T/sign" <<EOF
 #!/bin/sh
