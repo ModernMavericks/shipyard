@@ -12,6 +12,7 @@ w="$(mktemp -d "${TMPDIR:-/tmp}/lipo-merge-test.XXXXXX")"; trap 'rm -rf "$w"' EX
 printf 'int main(void){return 0;}\n' > "$w/m.c"
 clang -arch i386   -o "$w/m-i386"   "$w/m.c" 2>/dev/null || { echo "SKIP: cannot build i386 here"; exit 77; }
 clang -arch x86_64 -o "$w/m-x86_64" "$w/m.c"
+clang -arch x86_64h -o "$w/m-x86_64h" "$w/m.c" 2>/dev/null || true  # x86_64h is optional for this test
 
 mk() {  # $1 = tree  $2 = the Mach-O to put at bin/tool
   mkdir -p "$1/bin" "$1/share/x" "$1/App.app/Contents"
@@ -62,6 +63,16 @@ if sh "$S" --a "$w/g" --b "$w/h" --out "$w/o6" >/dev/null 2>&1; then
   echo "FAIL: different x86_64 files must fail lipo"; exit 1
 fi
 [ ! -d "$w/o6" ] || { echo "FAIL: failed lipo must not leave OUT dir"; exit 1; }
+
+# x86_64h does NOT satisfy --require-archs "x86_64": the arch requirement is exact-token, not substring.
+if [ -f "$w/m-x86_64h" ]; then
+  lipo -create "$w/m-i386" "$w/m-x86_64h" -output "$w/m-i386-x86_64h"
+  mk "$w/k" "$w/m-i386-x86_64h"; mk "$w/l" "$w/m-i386-x86_64h"
+  if sh "$S" --a "$w/k" --b "$w/l" --out "$w/o8" --require-archs "i386 x86_64" >/dev/null 2>&1; then
+    echo "FAIL: i386+x86_64h must not satisfy --require-archs \"i386 x86_64\""; exit 1
+  fi
+  [ ! -d "$w/o8" ] || { echo "FAIL: failed arch validation must not leave OUT dir"; exit 1; }
+fi
 
 # A file in only one tree is refused.
 mk "$w/i" "$w/m-x86_64"; mk "$w/j" "$w/m-i386"; echo extra > "$w/i/share/x/only-in-a"

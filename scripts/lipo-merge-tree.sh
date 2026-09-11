@@ -29,7 +29,8 @@ trap 'rm -rf "$work" "$OUT"' EXIT
 
 is_macho() { lipo -info "$1" >/dev/null 2>&1; }
 allowed() { printf '%s\n' "$ALLOW" | grep -Fqx -- "$1"; }
-has_arch() { lipo -info "$1" | grep -q "$2"; }
+# Match exact architecture token, not substrings: arm64 must not match arm64e, x86_64 must not match x86_64h.
+has_arch() { lipo -info "$1" | grep -qw -- "$2"; }
 
 # Every path must exist in both trees.
 ( cd "$A" && find . \( -type f -o -type l \) | sort ) > "$work/lmt-a"
