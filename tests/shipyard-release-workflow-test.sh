@@ -42,35 +42,77 @@ if "github.run_id" not in grp:
 print("ok: publishes from the commit under test, on every push to main, alone in its group")
 PY
 python3 - "$w" <<'PY'
-import sys, yaml
+import re, sys, yaml
 wf = yaml.safe_load(open(sys.argv[1]))
-body = open(sys.argv[1]).read()
 
-# Both slices must be built, or the pkg cannot serve both kinds of developer.
-for need in ("SHIPYARD_BUILD_UPDATER", "package-pkg.sh", "sign_and_appcast.sh"):
-    if need not in body:
-        print("FAIL: release.yml never invokes %s" % need); sys.exit(1)
-if "arm64" not in body or "x86_64" not in body:
-    print("FAIL: release.yml does not build both updater slices"); sys.exit(1)
+# Inspect COMMANDS, never the file's text: release.yml's comments name every one of these scripts and
+# flags, so a substring search stays green after the invocation itself is deleted. Take every step's
+# parsed `run:` body, drop whole-line comments, and join backslash continuations so one command is one
+# line. (Only whole-line comments: a trailing '#' cannot be told from ${x#v} without a shell parser.)
+cmds = []
+for job in (wf.get("jobs") or {}).values():
+    for step in (job.get("steps") or []):
+        run = step.get("run") or ""
+        lines = [l for l in run.splitlines() if not l.lstrip().startswith("#")]
+        joined = re.sub(r"\\\s*\n\s*", " ", "\n".join(lines))
+        cmds += [" ".join(l.split()) for l in joined.splitlines() if l.strip()]
 
-# The tarball is retired: nothing consumed it, and GitHub ships source archives for free.
-if "tar -czf" in body or "shipyard-$v.tar.gz" in body:
-    print("FAIL: the release tarball should be gone; the pkg is the asset now"); sys.exit(1)
+def find(pattern):
+    return [c for c in cmds if re.search(pattern, c)]
+
+bad = []
+def need(pattern, why):
+    if not find(pattern):
+        bad.append(why)
+
+# Both slices must be configured with the updater on AND built, or the pkg cannot serve both kinds
+# of developer.
+for arch in ("x86_64", "arm64"):
+    conf = find(r"^cmake -S \S+ -B (\S+) .*-DSHIPYARD_BUILD_UPDATER=ON\b.*-DCMAKE_OSX_ARCHITECTURES=%s\b" % arch) \
+        + find(r"^cmake -S \S+ -B (\S+) .*-DCMAKE_OSX_ARCHITECTURES=%s\b.*-DSHIPYARD_BUILD_UPDATER=ON\b" % arch)
+    if not conf:
+        bad.append("no configure of the %s updater slice (-DSHIPYARD_BUILD_UPDATER=ON -DCMAKE_OSX_ARCHITECTURES=%s)" % (arch, arch))
+        continue
+    bdir = re.search(r"-B (\S+)", conf[0]).group(1)
+    if not find(r"^cmake --build %s(\s|$)" % re.escape(bdir)):
+        bad.append("the %s updater slice is configured in %s but never built" % (arch, bdir))
+
+# One pkg, from this checkout's package-pkg.sh, carrying each slice under the name its postinstall
+# looks for.
+need(r"^sh scripts/package-pkg\.sh .*--app-native \S*/MavericksShipyardUpdater\.app\"? .*--app-cross \S*/MavericksShipyardCrossUpdater\.app\"?",
+     "release.yml never runs scripts/package-pkg.sh with the native and cross updater apps")
 
 # The built pkg is gated the way the family gates one: what the installer does on a box that has the
 # previous version, and whether the artifacts agree with each other.
-for need in ("assert_pkg_installs_in_place.sh", "check-artifact-conformance.sh"):
-    if need not in body:
-        print("FAIL: release.yml never runs %s on the pkg" % need); sys.exit(1)
+need(r"^sh scripts/assert_pkg_installs_in_place\.sh \S*\.pkg\"?$",
+     "release.yml never runs scripts/assert_pkg_installs_in_place.sh on the pkg")
+need(r"^sh scripts/artifact-facts\.sh dist \S+ \| sh scripts/check-artifact-conformance\.sh$",
+     "release.yml never pipes artifact-facts.sh into scripts/check-artifact-conformance.sh")
+
+# Signed, with the appcast written into the release.
+need(r"^sh scripts/sign_and_appcast\.sh .*--pkg \S+\.pkg\"? > dist/appcast\.xml$",
+     "release.yml never runs scripts/sign_and_appcast.sh into dist/appcast.xml")
 
 # shipyard's tags are vX.Y.Z. Without --tag-glob the upgradeable gate sees none of them, finds no
 # previous release, and skips the ordering check on every release.
-if "assert_appcast_upgradeable.sh" not in body or "--tag-glob" not in body:
-    print("FAIL: release.yml must run assert_appcast_upgradeable.sh with --tag-glob"); sys.exit(1)
+need(r"^sh scripts/assert_appcast_upgradeable\.sh .*--appcast dist/appcast\.xml .*--tag-glob 'v\*\.\*\.\*'",
+     "release.yml must run scripts/assert_appcast_upgradeable.sh on dist/appcast.xml with --tag-glob 'v*.*.*'")
 
 # release-notes-file.sh prints a PATH. The body must be the file's content, and must not be empty.
-if "::error::release notes came back empty" not in body:
-    print("FAIL: release.yml lost the empty-release-notes guard"); sys.exit(1)
+need(r"^cp \"\$notes_path\" dist/RELEASE_NOTES\.md$",
+     "release.yml no longer copies the notes FILE (release-notes-file.sh prints a path) into dist/RELEASE_NOTES.md")
+need(r"^\[ -s dist/RELEASE_NOTES\.md \] \|\| \{ echo \"::error::release notes came back empty\"; exit 1; \}$",
+     "release.yml lost the empty-release-notes guard")
+
+# The tarball is retired: nothing consumed it, and GitHub ships source archives for free.
+tars = find(r"(^|[\s;|&(])tar\s") + find(r"\.tar\.gz\b")
+if tars:
+    bad.append("the release tarball should be gone; the pkg is the asset now: %r" % tars[0])
+
+if bad:
+    for b in bad:
+        print("FAIL: " + b)
+    sys.exit(1)
 print("ok: builds both slices, packages, gates the pkg, signs an appcast, ships no tarball")
 PY
 echo "PASS: shipyard-release-workflow"
