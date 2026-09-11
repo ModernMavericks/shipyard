@@ -985,6 +985,11 @@ in the same commit.
   `.bats` file with no bats means a broken environment — `run-repo-tests.sh` reports **FAIL**, not
   SKIP. A skipped assertion is one nobody is checking, which is the hole that let two tests rot.
   Working locally without bats: `brew install bats-core` (or your platform's package).
+- **An assertion must be able to fail — on 10.9 too.** On bash < 4.1 (10.9's `/bin/bash`, which
+  pkgsrc's bats runs under) a failing `[[ ]]` that is not a test's last command does not fail the
+  test, and on any bash a bare `! cmd` never trips errexit: both read as checks and check nothing.
+  End them `|| false` (or use `run ! cmd`). `check-shell-portability.sh` bans the bare forms; it found
+  seventeen in shipyard and fourteen in ed25519, all green on 10.9 whatever the code did.
 - **Never hand-enumerate test files in CI.** That is how `macports-legacy-support` ended up with nine
   test files it had not run since each was written — two of which had rotted: one asserting Renovate's
   pre-migration `fileMatch` key, one checking an `.icns` filename that changed when the repo was

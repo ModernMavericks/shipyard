@@ -11,6 +11,13 @@
 #   - a bare `mktemp -d` in run-repo-tests.sh and 12 test files: 10.9 mktemp demands a template, so
 #     the test runner died on its own logfile and the suite could not START on 10.9.
 #
+# It also bans the assertion forms that CANNOT FAIL there, which is worse than failing: a bare
+# `[[ ]]` mid-test (bash < 4.1 -- 10.9's /bin/bash, which pkgsrc's bats runs under -- does not let it
+# fail the test) and a bare `! cmd` (no bash lets errexit see it). ed25519's suite carried fourteen of
+# the first kind and one test that only passed on `env`'s usage error; all of them green on 10.9.
+# A `! cmd` line continued with a trailing backslash is skipped: a line-based lint cannot see whether
+# the `|| fail` is on the next line (porthole's are), so there it trusts the author.
+#
 # Adding a rule is one line in the table. Each rule carries a SAMPLE it must still match, asserted
 # before any scan: a lint whose pattern quietly stopped matching is green forever AND stops anyone
 # from looking, which is strictly worse than no lint.
@@ -30,6 +37,8 @@ cat > "$rulesfile" <<'RULES'
 sort[[:space:]]+(-[A-Za-z]*V\b|--version-sort)	git tag --list | sort -V | tail -1	sort -V	compare numerically instead (shipyard's lib.sh ver_cmp; see previous-release-tag.sh) -- 10.9's BSD sort has no -V and exits 2 having printed NOTHING, so a caller that swallows stderr gets a silently empty result
 \$\(mktemp([[:space:]]+-[A-Za-z]+)*[[:space:]]*\)	work="$(mktemp -d)"	mktemp with no template	give it one: mktemp -d "${TMPDIR:-/tmp}/<name>.XXXXXX" -- 10.9 BSD mktemp rejects a bare -d with a usage error
 lipo[^|;&]*[[:space:]]-archs\b	for a in $(lipo -archs "$b"); do	lipo -archs	use `lipo -info "$f" | sed -n 's/.*: //p'` (add | xargs when comparing for an EXACT arch set) -- 10.9's lipo has no -archs and dies "unknown flag: -archs". -info exists on every macOS; sed -n ...p prints only the line that names the archs, which matters because 10.9's lipo also prints "input file X is not a fat file" to STDOUT for a thin file, and a plain s/.*: // would pass that noise straight through
+^[[:space:]]*\[\[[[:space:]].*\]\][[:space:]]*(#.*)?$|\]\][[:space:]]*;[[:space:]]*done	  [[ "$output" == *"<li>one</li>"* ]]	a bare [[ ]] assertion	end it `|| false` (what bats documents for this) -- on bash < 4.1, 10.9's /bin/bash and the one pkgsrc's bats runs under, a failing [[ ]] that is not the last command of a test does NOT fail it, so on 10.9 the assertion checks nothing
+^[[:space:]]*![[:space:]]([^|&]|\|[^|]|&[^&])*[^\\|&]$	  ! echo "$output" | grep -q 'tag v1)'	a bare !-negated command	end it `|| false`, or in bats write `run ! cmd` -- on ANY bash a !-negated command never trips errexit, so anywhere but a test's last line it checks nothing
 RULES
 
 TAB="$(printf '\t')"
@@ -70,7 +79,7 @@ while IFS="$TAB" read -r pat sample what instead; do
     hits="$(sed -e 's/^[[:space:]]*#.*//' -e '/portability-ok:[[:space:]]*[^[:space:]]/s/.*//' "$f" | grep -nE "$pat" || true)"
     [ -n "$hits" ] || continue
     printf '%s\n' "$hits" | while IFS= read -r h; do
-      echo "check-shell-portability: $f:${h%%:*} uses $what -- unavailable on 10.9" >&2
+      echo "check-shell-portability: $f:${h%%:*} uses $what -- a hazard on 10.9" >&2
     done
     echo "    fix: $instead" >&2
     status=1

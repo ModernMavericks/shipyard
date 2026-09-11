@@ -61,6 +61,37 @@ printf '#!/bin/sh\necho ok\n' > "$work/u/a.sh"
 printf '#!/bin/sh\nsort -V\n' > "$work/u/vendored.sh"  # portability-ok: a lint fixture must contain the violation it tests for
 (cd "$work/u" && sh "$S" >/dev/null) || { echo "FAIL untracked files should be out of scope"; exit 1; }
 
+# An assertion that cannot fail is worse than none, because it reads as a check. On bash < 4.1 --
+# 10.9's /bin/bash, which pkgsrc's bats runs under -- a failing [[ ]] that is not a test's last
+# command does not fail the test; on ANY bash a `!`-negated command never trips errexit. ed25519's
+# suite carried fourteen of the first kind, green on 10.9 whatever the code did.
+mkrepo "$work/a"
+printf '@test "t" {\n  run x\n  [[ "$output" == *y* ]]\n  [ "$status" -eq 0 ]\n}\n' > "$work/a/t.bats"  # portability-ok: a lint fixture must contain the violation
+(cd "$work/a" && git add -A) >/dev/null 2>&1
+if out="$(cd "$work/a" && sh "$S" 2>&1)"; then echo "FAIL a bare [[ ]] assertion should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 't.bats:3' || { echo "FAIL should name the bare [[ ]] line: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q '|| false' || { echo "FAIL should say to end it || false: $out"; exit 1; }
+
+# ...including as the body of a one-line loop
+mkrepo "$work/a2"
+printf '@test "t" {\n  for i in 1 2; do [[ $i == 1 ]]; done\n  true\n}\n' > "$work/a2/t.bats"  # portability-ok: a lint fixture must contain the violation
+(cd "$work/a2" && git add -A) >/dev/null 2>&1
+if out="$(cd "$work/a2" && sh "$S" 2>&1)"; then echo "FAIL a [[ ]] loop body should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 't.bats:2' || { echo "FAIL should name the loop line: $out"; exit 1; }
+
+# a bare !-negated pipeline
+mkrepo "$work/n"
+printf '@test "t" {\n  ! echo "$output" | grep -q y\n  true\n}\n' > "$work/n/t.bats"  # portability-ok: a lint fixture must contain the violation
+(cd "$work/n" && git add -A) >/dev/null 2>&1
+if out="$(cd "$work/n" && sh "$S" 2>&1)"; then echo "FAIL a bare ! command should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 't.bats:2' || { echo "FAIL should name the ! line: $out"; exit 1; }
+
+# the forms that DO fail a test pass the lint: || false, a condition, ! ... || fail, run !
+mkrepo "$work/a3"
+printf '@test "t" {\n  [[ "$output" == *y* ]] || false\n  if [[ -n "$x" ]]; then true; fi\n  ! grep -q x f || { echo no; exit 1; }\n  ! grep x f \\\n      | grep -q y || return 1\n  run ! false\n  for i in 1; do [[ $i == 1 ]] || false; done\n}\n' > "$work/a3/t.bats"
+(cd "$work/a3" && git add -A) >/dev/null 2>&1
+(cd "$work/a3" && sh "$S" >/dev/null) || { echo "FAIL assertions that can fail should pass the lint"; exit 1; }
+
 # a rule that no longer matches its own sample is DEAD, and must say so rather than pass
 sed 's/^sort\[\[:space:\]\]/sortXX[[:space:]]/' "$S" > "$work/dead.sh"
 if out="$(cd "$work/ok" && sh "$work/dead.sh" 2>&1)"; then echo "FAIL a dead rule should fail"; exit 1; fi

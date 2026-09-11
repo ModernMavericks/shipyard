@@ -54,7 +54,7 @@ teardown() { rm -rf "$WORK"; }
   [ -f "$WORK/sel_bad" ] || skip "sel_bad fixture did not build (no AppKit?)"
   run sh "$GUARD" "$WORK/sel_bad"
   [ "$status" -ne 0 ]
-  [[ "$output" == *labelColor* ]]
+  [[ "$output" == *labelColor* ]] || false
 }
 
 @test "a 10.9-safe selector (blackColor) passes the selector scan" {

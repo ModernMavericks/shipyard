@@ -122,7 +122,7 @@ appcast() {
   run sh -c "cd '$REPO' && sh '$GATE' --appcast '$(appcast 1.0.1)' --version v1.0.1 --tag-glob 'v*.*.*'"
   [ "$status" -eq 0 ]
   echo "$output" | grep -q 'first release'
-  ! echo "$output" | grep -q 'tag v1)'
+  ! echo "$output" | grep -q 'tag v1)' || false
 }
 
 @test "--tag-glob: the -mavericks.N tags of the default scope are out of scope" {
