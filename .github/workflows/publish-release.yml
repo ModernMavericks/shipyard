@@ -61,6 +61,20 @@ jobs:
           name: ${{ inputs.artifact }}
           path: dist
 
+      # A signed release must come with scan-for-key.yml's record that this run's logs and files were
+      # scanned for the signing key. That scan runs in the caller's own job (it needs actions: read,
+      # which this workflow may not ask for); this is where its absence shows, for every product.
+      - name: Look for the signing-key scan
+        id: keyscan
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: sparkle-key-scan
+          path: .keyscan
+
+      - name: A signed release must have been scanned for the signing key
+        run: sh .shipyard/scripts/require_key_scan.sh dist .keyscan
+
       - name: Select assets, verify the notes, checksum
         id: assets
         env:

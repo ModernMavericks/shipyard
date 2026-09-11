@@ -1,0 +1,96 @@
+name: scan-for-key
+
+# Reusable: prove that no log of this run, and no file about to be released, carries any piece of the
+# Sparkle signing key -- before anything is published. A public repo's Actions logs are public, and
+# GitHub masks only the literal secret: a trace, a slice, a hex dump or a re-encoding goes out as-is.
+# scan_for_key.py looks for every 12-byte window of the key's secret half in all of those forms and
+# reports where, never what.
+#
+# Call it from a product's release.yml between the job that signs and publish-release.yml, gated the
+# same way publish is:
+#
+#   scan:
+#     needs: [build]
+#     if: needs.build.outputs.publish == 'yes'
+#     permissions: { actions: read, contents: read }   # actions: read = this run's job logs
+#     uses: ModernMavericks/shipyard/.github/workflows/scan-for-key.yml@v1
+#     with: { artifact: <the artifact publish-release.yml publishes> }
+#     secrets: { SPARKLE_PRIVATE_KEY: "${{ secrets.SPARKLE_PRIVATE_KEY }}" }
+#   publish:
+#     needs: [build, scan]
+#
+# It is its own workflow, not a step of publish-release.yml, because reading job logs needs
+# `actions: read` and a called workflow may not ask for more than its caller grants: every product
+# calls publish-release.yml with `contents: write` alone. On a pass this uploads the sparkle-key-scan
+# artifact; publish-release.yml looks for it on any signed release (scripts/require_key_scan.sh).
+#
+# What it cannot do: un-show what a log already showed. A hit stops the release within minutes of the
+# leak; the key must then be treated as public. The prevention is upstream of this -- the key never
+# reaches a command line or a trace (tests/sign_and_appcast_key.bats) -- and this proves it held.
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: "Artifact holding the files about to be released."
+        type: string
+        required: true
+      shipyard-ref:
+        description: "shipyard ref to take the scan scripts from."
+        type: string
+        required: false
+        default: v1
+    secrets:
+      SPARKLE_PRIVATE_KEY:
+        required: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read     # this run's job logs
+      contents: read
+    steps:
+      - name: Check out shipyard (for the scan scripts)
+        uses: actions/checkout@v7
+        with:
+          repository: ModernMavericks/shipyard
+          ref: ${{ inputs.shipyard-ref }}
+          path: .shipyard
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact }}
+          path: dist
+
+      - name: Fetch this run's finished job logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh .shipyard/scripts/fetch_run_logs.sh "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" logs
+
+      # The key is only ever in this step's environment, read by the scanner; the shell never expands
+      # it, and the scanner prints where it found a piece, never the piece.
+      - name: Scan the logs and the release files for the signing key
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -u
+          set +e   # the step runs under bash -e; the scanner's exit status is the answer, not a crash
+          python3 .shipyard/scripts/scan_for_key.py logs/* dist/*
+          rc=$?
+          set -e
+          case $rc in
+            0) ;;
+            1) echo "::error::a piece of SPARKLE_PRIVATE_KEY is in this run's logs or release files (above: where, never what). Nothing will be published."
+               echo "::error::Treat the key as public: rotate it, and delete this run's logs once it finishes -- gh api -X DELETE repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/logs"
+               exit 1 ;;
+            *) echo "::error::could not scan for the signing key -- refusing to call that a pass"; exit 1 ;;
+          esac
+          { printf 'scanned %s finished job log(s) and %s release file(s) of run %s; no piece of the signing key\n' \
+              "$(ls logs | wc -l | tr -d ' ')" "$(ls dist | wc -l | tr -d ' ')" "$GITHUB_RUN_ID"; } > sparkle-key-scan.txt
+          cat sparkle-key-scan.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sparkle-key-scan
+          path: sparkle-key-scan.txt

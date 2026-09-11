@@ -765,6 +765,16 @@ signal (see the auto-merge intent above — fix runtime regressions in `-maveric
   `[ -n "$SPARKLE_PRIVATE_KEY" ]` (a trace prints it — use `printenv SPARKLE_PRIVATE_KEY | grep -q .`),
   and never decode, slice, or write it anywhere. Until 2026-09-10 the key was an argv to
   `ed25519-sign -s`, beside a comment saying it never was.
+- **Every signing run proves its logs don't carry the key — before publishing.** A signing product's
+  `release.yml` calls `scan-for-key.yml` between the job that signs and `publish-release.yml` (the
+  snippet is at the top of that workflow): it fetches this run's finished job logs and scans them,
+  plus the files about to be released, for every 12-byte window of the key's secret half as raw
+  bytes, hex, and standard/url-safe base64 at each byte alignment (`scan_for_key.py`, which reports
+  where, never what). A hit stops the release; the key must then be treated as public. It is a
+  separate workflow because reading logs needs `actions: read` and a called workflow can't ask for
+  more than its caller grants — adding it to `publish-release.yml` would break every product's
+  publish. `publish-release.yml` instead looks for the scan's record on any signed release
+  (`require_key_scan.sh`): a warning until every signing product has the job, then an error.
 - **A signature must satisfy the clients ALREADY INSTALLED — checked before the appcast exists.** A
   Sparkle client verifies against the `SUPublicEDKey` of the updater it has, which came from the pkg
   the feed offered last time: not the repo's `.pub`, and not the key the new pkg ships.
@@ -1015,6 +1025,12 @@ it here.** A silently dropped increment is how the family drifted in the first p
       repo's `sign_and_appcast.sh` passes the key with `-f -` on `main` AND mavericks-ed25519 has
       released a `-f`-capable `ed25519-sign` — `sign_and_appcast.sh` signs with the *latest* ed25519
       release, so dropping `-s` any earlier breaks every product's signing. Transitional since 2026-09-10
+- [ ] **Every signing product calls `scan-for-key.yml`** (golang, openssh, tailscale, legacysupport,
+      swift-runtime, porthole, container-tools, clang, compat, magic-trackpad2 — and shipyard once it
+      signs). Exit condition: all of them have the job; then `require_key_scan.sh` turns its warning
+      into an error (flip `tests/require_key_scan.bats` with it), and `check-family-conventions.sh`
+      fails a `release.yml` that runs `sign_and_appcast.sh` without calling `scan-for-key.yml`.
+      Transitional since 2026-09-10
 - [ ] **North star, not yet designed:** should a product repo carry build machinery at all? One
       declarative config per repo (upstream, verification, binaries, ingredients, updater) that
       shipyard turns into the build, package, release, and checks — a repo that cannot express a
