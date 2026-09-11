@@ -43,9 +43,18 @@ runs:
         # The pkg's payload installs an EMPTY SDKs/ scaffold (verified: `pkgutil --payload-files`
         # lists it as a bare directory, no children). The 10.9 SDK itself is fetched, cached under
         # $HOME/Library/Caches by default, and checksum-verified on demand by the toolchain's own
-        # libexec/fetch_sdk.sh, which prints the SDK root on stdout -- that is the real sysroot, not
-        # "$mc/SDKs/MacOSX10.9.sdk".
+        # libexec/fetch_sdk.sh, which prints the SDK root on stdout -- it does not populate the
+        # prefix's SDKs/ directory itself (see below).
         sdk="$("$mc/libexec/fetch_sdk.sh")"
+        # bin/clang++.cfg (and clang.cfg) hardcode `-isysroot <CFGDIR>/../SDKs/MacOSX10.9.sdk` -- and
+        # the pkg ships that SDKs/ directory EMPTY (fetch_sdk.sh only caches the SDK under
+        # $HOME/Library/Caches/mavericks-sdk and prints its path; it never populates the prefix).
+        # --sysroot only reaches build-cmake.sh's own CMake-level configure, not the raw compiler
+        # invocations bootstrap's stage-0 makes -- those read the .cfg and get no headers at all.
+        # Family convention: symlink the toolchain's SDKs entry at the fetched SDK (same as
+        # mavericks-nodejs/build/fetch-toolchain.sh:51-56 and mavericks-clang/tests/smoke-target.sh:21-23).
+        sudo mkdir -p "$mc/SDKs"
+        sudo ln -sfn "$sdk" "$mc/SDKs/MacOSX10.9.sdk"
         CC="$mc/bin/clang" CXX="$mc/bin/clang++" \
           sh scripts/build-cmake.sh --arch x86_64 --min-os 10.9 --sysroot "$sdk" --prefix "$t/cmake-x86_64"
         sh scripts/assert_binary_compatible.sh "$t/cmake-x86_64/bin/cmake" "$t/cmake-x86_64/bin/ctest" "$t/cmake-x86_64/bin/cpack"
