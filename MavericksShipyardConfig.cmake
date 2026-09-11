@@ -4,9 +4,27 @@
 # MavericksShipyard/. Adds that directory to CMAKE_MODULE_PATH so consumers
 # can `include(Mavericks)` (which then finds MavericksMode/RequireAppleClang and
 # resolves scripts/ from its own location). This is a find_package package meant
-# to be INSTALLED to a prefix and provided via CMake's user package registry --
-# NOT vendored/submoduled into a consumer's source tree (the guard below enforces
-# this so consumers don't silently drift onto a stale in-tree copy).
+# to be INSTALLED to a prefix -- installed by the shipyard pkg and found by
+# shipyard-cmake -- NOT vendored/submoduled into a consumer's source tree (the
+# guard below enforces this so consumers don't silently drift onto a stale
+# in-tree copy).
+
+# Only shipyard's own cmake may configure against shipyard (spec 2026-09-11). shipyard ships its cmake
+# as /usr/local/bin/shipyard-cmake, whose real binary lives in the same prefix as this package, and a
+# cmake always searches its own install prefix -- so under shipyard-cmake this package is found with
+# no registry, no PATH and no CMAKE_PREFIX_PATH. Any OTHER cmake reaching this file (Homebrew's,
+# MacPorts', pkgsrc's, CMake.app's -- even pointed here on purpose) is refused: nothing may depend on a
+# cmake shipyard did not build. CMAKE_COMMAND is the resolved real path, so the check is not fooled by
+# a symlink named shipyard-cmake. An exception is a declared conventions deviation, not a flag.
+get_filename_component(_shipyard_cmake_bin "${CMAKE_COMMAND}" DIRECTORY)
+get_filename_component(_shipyard_cmake_prefix "${_shipyard_cmake_bin}" DIRECTORY)
+if(NOT EXISTS "${_shipyard_cmake_prefix}/share/cmake/MavericksShipyard/MavericksShipyardConfig.cmake")
+  message(FATAL_ERROR
+    "mavericks-shipyard must be configured with shipyard-cmake "
+    "(/usr/local/bin/shipyard-cmake, installed by the shipyard pkg; in GitHub Actions, "
+    "ModernMavericks/shipyard/.github/actions/install@v1 provides it). This configure is running "
+    "${CMAKE_COMMAND}. IDEs and CMake GUIs: point their cmake setting at /usr/local/bin/shipyard-cmake.")
+endif()
 
 # Fail clearly if consumed VENDORED: if this config resolves from INSIDE the
 # consumer's source tree, it's a submodule/copied-in checkout. Install it instead
@@ -17,8 +35,8 @@ if(NOT MAVERICKS_ALLOW_VENDORED)
     message(FATAL_ERROR
       "mavericks-shipyard appears VENDORED: its config is inside the consumer "
       "tree (${CMAKE_CURRENT_LIST_DIR} under ${CMAKE_SOURCE_DIR}). It is a "
-      "find_package package -- install it once and let the user package registry "
-      "provide it; do not vendor or submodule it. See the README \"Install (once)\" "
+      "find_package package -- installed by the shipyard pkg and found by "
+      "shipyard-cmake; do not vendor or submodule it. See the README \"Install (once)\" "
       "section. Override deliberately with -DMAVERICKS_ALLOW_VENDORED=ON.")
   endif()
 endif()
