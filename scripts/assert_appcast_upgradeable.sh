@@ -9,8 +9,9 @@
 #     component-wise numeric comparison SUStandardVersionComparator applies on that domain.
 #
 # Runs where the release tags live (the CI release job's checkout). The previous release is the
-# numerically-highest existing <upstream>-mavericks.N tag; its numeric key is derived exactly as
-# gen_appcast.sh derives the appcast's ("-mavericks." -> "."). With NO previous tag (the first release)
+# numerically-highest existing <upstream>-mavericks.N tag (or, with --tag-glob, the highest tag matching
+# that glob); its numeric key is derived exactly as gen_appcast.sh derives the appcast's
+# ("-mavericks." -> ".", and under --tag-glob a leading "v" dropped). With NO previous tag (the first release)
 # the ordering check is SKIPPED -- and SAID to be, never silently passed. If tags can't be listed at
 # all (not a git checkout) the gate FAILS rather than skip: a silent no-op is how these bugs shipped.
 #
@@ -20,26 +21,35 @@
 # the shared comparator is what keeps it consistent with the ordering assertion it feeds.
 #
 # Usage:
-#   assert_appcast_upgradeable.sh --appcast FILE --version V [--upstream-glob G]
-#     --version        the release being published; excluded from the tag search so a tag build
-#                      compares against its PREDECESSOR, not itself.
+#   assert_appcast_upgradeable.sh --appcast FILE --version V [--upstream-glob G | --tag-glob G]
+#     --version        the release being published -- the TAG name; excluded from the tag search so a
+#                      tag build compares against its PREDECESSOR, not itself.
 #     --upstream-glob  scope for a repo shipping parallel upstream lines (golang: '1.26.*'), so N is
-#                      compared within its own line.
+#                      compared within its own line. Searches '<G>-mavericks.*'.
+#     --tag-glob       for a repo whose tags are NOT <upstream>-mavericks.N: the whole tag glob,
+#                      verbatim. shipyard tags vX.Y.Z and calls this with 'v*.*.*' -- which also keeps
+#                      out its moving major tag (v1). Without it the default scope finds no shipyard
+#                      tag at all, and every release would take the first-release exit: the silent
+#                      no-op this gate refuses. Not combinable with --upstream-glob.
 set -eu
 SELF="$(cd "$(dirname "$0")" && pwd)"
 . "$SELF/lib.sh"          # numeric(), ver_cmp() -- shared so this gate and
                           # previous-release-tag.sh cannot disagree on which tag is highest
 
-APPCAST=""; VER=""; GLOB=""
+APPCAST=""; VER=""; GLOB=""; TAG_GLOB=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --appcast) APPCAST="$2"; shift 2;;
     --version) VER="$2"; shift 2;;
     --upstream-glob) GLOB="$2"; shift 2;;
+    --tag-glob) TAG_GLOB="$2"; shift 2;;
     *) echo "assert_appcast_upgradeable: unknown arg: $1" >&2; exit 2;;
   esac
 done
 [ -n "$APPCAST" ] && [ -n "$VER" ] || { echo "assert_appcast_upgradeable: need --appcast --version" >&2; exit 2; }
+# Two scopes at once has no single meaning; pick one rather than guess which wins.
+[ -z "$GLOB" ] || [ -z "$TAG_GLOB" ] \
+  || { echo "assert_appcast_upgradeable: --upstream-glob or --tag-glob, not both" >&2; exit 2; }
 [ -f "$APPCAST" ] || { echo "assert_appcast_upgradeable: no appcast: $APPCAST" >&2; exit 1; }
 
 NEW="$(sed -n 's|.*<sparkle:version>\([^<]*\)</sparkle:version>.*|\1|p' "$APPCAST" | head -1)"
@@ -50,6 +60,7 @@ if ! numeric "$NEW"; then
 fi
 
 pattern="*-mavericks.*"; [ -z "$GLOB" ] || pattern="${GLOB}-mavericks.*"
+[ -z "$TAG_GLOB" ] || pattern="$TAG_GLOB"
 if ! tags="$(git tag --list "$pattern" 2>/dev/null)"; then
   echo "assert_appcast_upgradeable: cannot list git tags (not a checkout?) -- run where the release tags live; refusing to skip silently" >&2
   exit 1
@@ -59,13 +70,18 @@ fi
 PREV_TAG=""; PREV=""
 for t in $tags; do
   [ "$t" = "$VER" ] && continue
-  k="$(printf '%s' "$t" | sed 's/-mavericks\./\./')"
+  # "-mavericks." -> "." (the family's scheme); under --tag-glob also a leading "v" (vX.Y.Z). Only
+  # there: in the default scope a stray v-prefixed twin of a real tag (legacysupport has
+  # v1.5.2-mavericks.1 beside 1.5.2-mavericks.1) has always been skipped, and must stay skipped.
+  # Whatever is still not purely numeric is not a release of this line.
+  if [ -n "$TAG_GLOB" ]; then k="${t#v}"; else k="$t"; fi
+  k="$(printf '%s' "$k" | sed 's/-mavericks\./\./')"
   numeric "$k" || continue
   if [ -z "$PREV" ] || [ "$(ver_cmp "$k" "$PREV")" = 1 ]; then PREV="$k"; PREV_TAG="$t"; fi
 done
 
 if [ -z "$PREV" ]; then
-  echo "assert_appcast_upgradeable: ok — sparkle:version $NEW is numeric; no previous release${GLOB:+ in line $GLOB} to order against (first release)"
+  echo "assert_appcast_upgradeable: ok — sparkle:version $NEW is numeric; no previous release${GLOB:+ in line $GLOB}${TAG_GLOB:+ among tags matching $TAG_GLOB} to order against (first release)"
   exit 0
 fi
 
