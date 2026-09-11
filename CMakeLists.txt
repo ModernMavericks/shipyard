@@ -24,34 +24,30 @@ project(MavericksShipyard VERSION ${_MSC_VERSION} LANGUAGES NONE)
 # and compiles nothing, so `cmake --install` works on a box with no ObjC compiler -- and the payload
 # stays buildable where there is no Objective-C at all. Only the pkg job turns this on.
 #
-# One target, configured TWICE (x86_64/10.9 and arm64) rather than two targets: CMAKE_OSX_ARCHITECTURES
-# and the deployment target are directory-scoped, and arm64 has no 10.9. mavericks-golang does the
-# same with build/updater and build/updater-cross.
+# Built once per arch (x86_64/10.9 and arm64/11.0) rather than a single fat build: CMAKE_OSX_ARCHITECTURES
+# and the deployment target are directory-scoped, and a fat CMAKE_OSX_ARCHITECTURES can't carry two
+# floors -- arm64 has no 10.9. The two single-arch builds share the same NAME and BUNDLE_ID and are
+# merged into ONE universal .app by scripts/lipo-merge-tree.sh in the release, not picked between.
 option(SHIPYARD_BUILD_UPDATER "Build the Sparkle updater app (needed only to package the pkg)" OFF)
 if(SHIPYARD_BUILD_UPDATER)
   enable_language(OBJC)
+  # Every slice embeds Sparkle's FAT framework, so the two single-arch builds carry an identical
+  # framework and lipo-merge-tree.sh only has to merge the updater's own executable.
+  set(ENV{MAVERICKS_SPARKLE_ARCH} all)
   include("${CMAKE_CURRENT_SOURCE_DIR}/MavericksSparkle.cmake")
 
-  # The two slices are staged into ONE pkg (Task 3), so same-named .app bundles would overwrite each
-  # other -- unlike mavericks-golang's updater, which builds one variant per invocation into its own
-  # dir. Give each slice its own target NAME (mirroring mavericks-golang's GoUpdater/GoCrossUpdater)
-  # as well as its own bundle-id suffix, matching mavericks-clang's identifiers.
-  set(_upd_name "MavericksShipyardUpdater")
-  set(_upd_suffix "")
-  if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
-    set(_upd_name "MavericksShipyardCrossUpdater")
-    set(_upd_suffix "-cross")
-  endif()
-
+  # ONE universal app (spec 2026-09-11): built once per arch -- x86_64/10.9 and arm64/11.0, since a
+  # deployment floor is per-configure and arm64 has no 10.9 -- and merged by lipo-merge-tree.sh in the
+  # release. Same name and bundle id for both builds, so the merge is of one app, not two.
   mavericks_add_updater_app(
-    NAME ${_upd_name}
+    NAME MavericksShipyardUpdater
     PRODUCT_NAME "Mavericks Shipyard"
-    BUNDLE_ID "dev.modernmavericks.mavericks-shipyard${_upd_suffix}"
+    BUNDLE_ID "dev.modernmavericks.mavericks-shipyard"
     FEED_URL "https://github.com/ModernMavericks/shipyard/releases/latest/download/appcast.xml"
     VERSION "${PROJECT_VERSION}"
     LOG_PREFIX "MavShipyardUpdater"
     CONFIRM_TITLE "Mavericks Shipyard updated"
-    CONFIRM_BODY "The shared CMake modules and scripts in /usr/local/mavericks-shipyard were updated."
+    CONFIRM_BODY "Mavericks Shipyard and shipyard-cmake in /usr/local/mavericks-shipyard were updated."
     RELAUNCH_MARKER "/tmp/.mavericks-shipyard-updater-relaunched"
     ALLOW_GENERIC
     # no PANE_HINT_KEY -> a background-found update posts an NSUserNotification. shipyard has no UI.
