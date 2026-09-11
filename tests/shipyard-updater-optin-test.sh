@@ -31,8 +31,11 @@ fi
 if grep -q 'CrossUpdater\|-cross' "$root/CMakeLists.txt"; then
   echo "FAIL: CMakeLists.txt still defines a -cross updater slice; there is one universal app now"; exit 1
 fi
-# Both slices must embed the SAME fat Sparkle framework, or lipo-merge-tree.sh sees two frameworks.
-grep -q 'MAVERICKS_SPARKLE_ARCH' "$root/CMakeLists.txt" \
-  || { echo "FAIL: the updater must fetch Sparkle's fat framework (MAVERICKS_SPARKLE_ARCH=all) for every slice"; exit 1; }
+# Both per-arch builds must embed the IDENTICAL fat Sparkle framework, or lipo-merge-tree.sh
+# would see two different frameworks to merge instead of one executable. Pin the value itself --
+# grepping for the bare name would stay green even if someone "optimized" it to a single arch
+# (e.g. MAVERICKS_SPARKLE_ARCH=x86_64), which would silently break Task 8's merge.
+grep -q 'MAVERICKS_SPARKLE_ARCH} all)' "$root/CMakeLists.txt" \
+  || { echo "FAIL: MAVERICKS_SPARKLE_ARCH must be pinned to 'all' -- both per-arch builds must embed the identical fat Sparkle framework so the merge only has the executable left to lipo"; exit 1; }
 
 echo "PASS: shipyard-updater-optin"
