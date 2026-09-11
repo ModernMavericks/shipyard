@@ -67,20 +67,51 @@ jobs:
       - name: Our own conventions gate
         run: sh scripts/check-family-conventions.sh
 
-      - name: Assemble the release tarball
+      # The release asset is a pkg that installs the payload on either kind of box and keeps itself
+      # current. There is no tarball: nothing consumed it, and GitHub attaches source archives to
+      # every tag for free.
+      - name: Build both updater slices
+        run: |
+          set -eu
+          # Two configures, not two targets: CMAKE_OSX_ARCHITECTURES and the deployment target are
+          # directory-scoped, and arm64 has no 10.9. Same shape as mavericks-golang's updater and
+          # updater-cross. This runner is arm64, so x86_64/10.9 is the cross build here -- it is still
+          # the "native" slice in the pkg's sense: the one that runs on the 10.9 box.
+          # /usr/bin/clang, as every family updater build pins: the Apple toolchain, whatever else the
+          # runner image puts on PATH.
+          cmake -S . -B "$RUNNER_TEMP/upd-native" -DSHIPYARD_BUILD_UPDATER=ON \
+            -DMAVERICKS_ALLOW_GENERIC_ICON=ON -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9
+          cmake --build "$RUNNER_TEMP/upd-native"
+          cmake -S . -B "$RUNNER_TEMP/upd-cross" -DSHIPYARD_BUILD_UPDATER=ON \
+            -DMAVERICKS_ALLOW_GENERIC_ICON=ON -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          cmake --build "$RUNNER_TEMP/upd-cross"
+
+      - name: Package
         run: |
           set -eu
           v='${{ steps.ver.outputs.version }}'
-          mkdir -p dist "$RUNNER_TEMP/stage/shipyard-$v"
-          # Deliberately a buildable SOURCE TREE, not `cmake --install`'s output: it carries
-          # CMakeLists.txt, UPSTREAM_VERSION, VERSION and default.json (which an install doesn't
-          # lay down) and omits the generated MavericksShipyardConfigVersion.cmake (there's no
-          # build yet to generate it from). A consumer builds/installs from this; it is not the
-          # install layout.
-          cp -R CMakeLists.txt UPSTREAM_VERSION VERSION default.json mavericks-presets.json \
-                scripts updater "$RUNNER_TEMP/stage/shipyard-$v/"
-          cp ./*.cmake "$RUNNER_TEMP/stage/shipyard-$v/"
-          ( cd "$RUNNER_TEMP/stage" && tar -czf - "shipyard-$v" ) > "dist/shipyard-$v.tar.gz"
+          mkdir -p dist
+          # The payload is `cmake --install`'s layout, from its own configure: MAVERICKS_NO_USER_REGISTRY
+          # keeps this install from re-pointing the runner's registry (the self-install step above set
+          # it) at a staging prefix. The pkg's postinstall registers the INSTALLED payload instead.
+          cmake -S . -B "$RUNNER_TEMP/payload-build" -DMAVERICKS_NO_USER_REGISTRY=ON
+          cmake --install "$RUNNER_TEMP/payload-build" --prefix "$RUNNER_TEMP/payload-prefix"
+          sh scripts/package-pkg.sh \
+            --payload "$RUNNER_TEMP/payload-prefix/share/cmake/MavericksShipyard" \
+            --app-native "$RUNNER_TEMP/upd-native/MavericksShipyardUpdater.app" \
+            --app-cross  "$RUNNER_TEMP/upd-cross/MavericksShipyardCrossUpdater.app" \
+            --version "$v" \
+            --out "dist/mavericks-shipyard-$v.pkg"
+          # What the installer will DO on a box that has the previous version: no relocation to a
+          # locally built updater, no skipped overwrite.
+          sh scripts/assert_pkg_installs_in_place.sh "dist/mavericks-shipyard-$v.pkg"
+
+      - name: Release notes
+        run: |
+          set -eu
+          v='${{ steps.ver.outputs.version }}'
           # Notes are optional per release; the shared helper guarantees a non-empty body, generating
           # a default when release-notes/<TAG>.md is absent (shipyard has no committed notes, and with
           # a release per push it should not grow them for routine changes).
@@ -91,6 +122,35 @@ jobs:
           notes_path="$(MAVERICKS_ROOT="$PWD" sh scripts/release-notes-file.sh "v$v" "$v" "Mavericks Shipyard")"
           cp "$notes_path" dist/RELEASE_NOTES.md
           [ -s dist/RELEASE_NOTES.md ] || { echo "::error::release notes came back empty"; exit 1; }
+
+      - name: Sign + appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via gh
+        run: |
+          set -eu
+          v='${{ steps.ver.outputs.version }}'
+          # The same notes the Release body gets, so Sparkle and the Release page tell one story.
+          sh scripts/sign_and_appcast.sh \
+            --channel-title "Mavericks Shipyard" \
+            --version "$v" \
+            --pkg-url "https://github.com/ModernMavericks/shipyard/releases/download/v$v/mavericks-shipyard-$v.pkg" \
+            --notes-file dist/RELEASE_NOTES.md \
+            --pkg "dist/mavericks-shipyard-$v.pkg" \
+            > dist/appcast.xml
+          # A client on the previous release must SEE this one as an upgrade. shipyard tags vX.Y.Z,
+          # which the gate's default -mavericks.N scope cannot see -- without --tag-glob it would find
+          # no previous release and skip the ordering check on every release. 'v*.*.*' also keeps the
+          # moving major tag (v1) out of it.
+          sh scripts/assert_appcast_upgradeable.sh --appcast dist/appcast.xml --version "v$v" --tag-glob 'v*.*.*'
+
+      # Do the artifacts about to be published agree with each other and with the family's schemes?
+      # Where shipyard legitimately departs from them, INGREDIENTS.md says so and why.
+      - name: Artifact conformance
+        run: |
+          set -eu
+          v='${{ steps.ver.outputs.version }}'
+          sh scripts/artifact-facts.sh dist "$v" | sh scripts/check-artifact-conformance.sh
           ls -l dist
 
       - uses: actions/upload-artifact@v7
