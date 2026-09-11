@@ -49,13 +49,15 @@ wf = yaml.safe_load(open(sys.argv[1]))
 # flags, so a substring search stays green after the invocation itself is deleted. Take every step's
 # parsed `run:` body, drop whole-line comments, and join backslash continuations so one command is one
 # line. (Only whole-line comments: a trailing '#' cannot be told from ${x#v} without a shell parser.)
+def step_cmds(step):
+    lines = [l for l in (step.get("run") or "").splitlines() if not l.lstrip().startswith("#")]
+    joined = re.sub(r"\\\s*\n\s*", " ", "\n".join(lines))
+    return [" ".join(l.split()) for l in joined.splitlines() if l.strip()]
+
 cmds = []
 for job in (wf.get("jobs") or {}).values():
     for step in (job.get("steps") or []):
-        run = step.get("run") or ""
-        lines = [l for l in run.splitlines() if not l.lstrip().startswith("#")]
-        joined = re.sub(r"\\\s*\n\s*", " ", "\n".join(lines))
-        cmds += [" ".join(l.split()) for l in joined.splitlines() if l.strip()]
+        cmds += step_cmds(step)
 
 def find(pattern):
     return [c for c in cmds if re.search(pattern, c)]
@@ -109,10 +111,34 @@ tars = find(r"(^|[\s;|&(])tar\s") + find(r"\.tar\.gz\b")
 if tars:
     bad.append("the release tarball should be gone; the pkg is the asset now: %r" % tars[0])
 
+# The pkg is INSTALLED on this Apple Silicon runner before it is uploaded, and the updater left behind
+# must be the arm64 one. That is the only place the arm-picking postinstall ever runs for real before a
+# developer's box does: nothing on the 10.9 box can build or exercise the arm64 slice, and a pkg whose
+# scripts ran under Rosetta would keep the x86_64 updater (and delete the arm64 one) with every other
+# gate green. Checked within ONE step, bounded by timeout-minutes, ahead of the upload.
+build = wf["jobs"]["build"]["steps"]
+smoke = [i for i, s in enumerate(build)
+         if any(re.search(r'^sudo installer -pkg "?dist/mavericks-shipyard-\$v\.pkg"? -target /(\s|$)', c) for c in step_cmds(s))]
+if not smoke:
+    bad.append('release.yml never installs the pkg on the runner (sudo installer -pkg "dist/mavericks-shipyard-$v.pkg" -target /)')
+else:
+    i = smoke[0]
+    s = build[i]
+    sc = step_cmds(s)
+    exe = r'^exe="/Library/Application Support/ModernMavericks/MavericksShipyardCrossUpdater\.app/Contents/MacOS/MavericksShipyardCrossUpdater"$'
+    arch = r"""^lipo -info "\$exe" \| grep -q 'is architecture: arm64\$' \|\| fail """
+    if not (any(re.search(exe, c) for c in sc) and any(re.search(arch, c) for c in sc)):
+        bad.append("the install smoke never asserts the remaining updater (MavericksShipyardCrossUpdater) is arm64 via lipo -info")
+    if not s.get("timeout-minutes"):
+        bad.append("the install smoke step has no timeout-minutes; an install that hangs would hold the runner for the job's whole budget")
+    up = [j for j, t in enumerate(build) if str(t.get("uses", "")).startswith("actions/upload-artifact")]
+    if not up or i > up[0]:
+        bad.append("the install smoke must run BEFORE upload-artifact, so a pkg that fails it is never published")
+
 if bad:
     for b in bad:
         print("FAIL: " + b)
     sys.exit(1)
-print("ok: builds both slices, packages, gates the pkg, signs an appcast, ships no tarball")
+print("ok: builds both slices, packages, gates the pkg, signs an appcast, install-smokes it, ships no tarball")
 PY
 echo "PASS: shipyard-release-workflow"

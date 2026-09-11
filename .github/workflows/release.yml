@@ -153,6 +153,52 @@ jobs:
           sh scripts/artifact-facts.sh dist "$v" | sh scripts/check-artifact-conformance.sh
           ls -l dist
 
+      # INSTALL the pkg here: this runner is the only Apple Silicon box that sees it before a developer's
+      # does, and the 10.9 box can neither build nor exercise the arm64 slice. The way this goes wrong is
+      # silent -- if Installer ran the scripts under Rosetta, the postinstall would keep the x86_64
+      # updater and delete the arm64 one with every gate above still green -- so the slices and payload
+      # are HARD-asserted. The runner is ephemeral, so installing into / costs nothing.
+      #
+      # Registration is only WARNED on. It runs as the console user through their login shell, and this
+      # runner's login environment is not a developer's: a miss here is signal, not a release blocker.
+      - name: Install smoke (the pkg, on Apple Silicon)
+        timeout-minutes: 10
+        run: |
+          set -eu
+          v='${{ steps.ver.outputs.version }}'
+          apps="/Library/Application Support/ModernMavericks"
+          agents=/Library/LaunchAgents
+          payload=/usr/local/mavericks-shipyard
+          bad=0; show_log=0
+          fail() { echo "::error::install smoke: $*"; bad=1; }
+          scripts_log() {
+            echo "---- /var/log/install.log, the pkg's scripts ----"
+            sudo grep -E 'preinstall|postinstall|mavericks-shipyard' /var/log/install.log | tail -n 100 || true
+          }
+          sudo installer -pkg "dist/mavericks-shipyard-$v.pkg" -target / || fail "installer itself failed"
+          [ -f "$agents/dev.modernmavericks.mavericks-shipyard-cross-updatecheck.plist" ] || fail "the arm64 slice's LaunchAgent is missing"
+          [ -d "$apps/MavericksShipyardCrossUpdater.app" ] || fail "MavericksShipyardCrossUpdater.app is missing"
+          [ ! -e "$agents/dev.modernmavericks.mavericks-shipyard-updatecheck.plist" ] || fail "the x86_64 slice's LaunchAgent survived; launchd would run it, under Rosetta, at every login"
+          [ ! -e "$apps/MavericksShipyardUpdater.app" ] || fail "MavericksShipyardUpdater.app (x86_64) survived on Apple Silicon"
+          [ -f "$payload/MavericksShipyardConfig.cmake" ] || fail "$payload/MavericksShipyardConfig.cmake is missing"
+          [ -f "$payload/scripts/register-with-cmake.sh" ] || fail "$payload/scripts/register-with-cmake.sh is missing"
+          # lipo -info, not -archs (10.9's lipo has no -archs; the portability gate bans the idiom).
+          exe="/Library/Application Support/ModernMavericks/MavericksShipyardCrossUpdater.app/Contents/MacOS/MavericksShipyardCrossUpdater"
+          lipo -info "$exe" | grep -q 'is architecture: arm64$' || fail "the remaining updater is not a thin arm64 executable: $(lipo -info "$exe" 2>&1)"
+          reg="$HOME/.cmake/packages/MavericksShipyard/mavericks-shipyard"
+          if [ ! -f "$reg" ]; then
+            echo "::warning::install smoke: no registry entry at $reg -- the postinstall's registration (as the console user, via their login shell) never ran or found no cmake"
+            show_log=1
+          elif [ "$(cat "$reg")" != "$payload" ]; then
+            echo "::warning::install smoke: $reg points at $(cat "$reg"), not $payload -- the postinstall's registration did not reach this user or found no cmake on their login PATH"
+            show_log=1
+          else
+            echo "registry: $reg -> $payload"
+          fi
+          if [ "$bad" -ne 0 ] || [ "$show_log" -ne 0 ]; then scripts_log; fi
+          [ "$bad" -eq 0 ] || exit 1
+          echo "install smoke: arm64 updater kept, x86_64 updater removed, payload in $payload"
+
       - uses: actions/upload-artifact@v7
         with:
           name: shipyard-dist
