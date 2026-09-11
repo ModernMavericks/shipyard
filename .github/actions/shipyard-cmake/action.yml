@@ -34,6 +34,11 @@ runs:
         gh release download "$cv" -R ModernMavericks/clang --pattern 'mavericks-clang-*-cross-*.pkg' --pattern SHA256SUMS --dir "$d"
         ( cd "$d" && grep ' mavericks-clang-.*-cross-.*\.pkg$' SHA256SUMS | shasum -a 256 -c - )
         sudo installer -pkg "$d"/mavericks-clang-*-cross-*.pkg -target /
+        # bootstrap compiles a stage-0 cmake and RUNS it. mavericks-clang always targets x86_64/10.9, so on
+        # this arm64 runner that stage-0 is an x86_64 binary: without Rosetta it cannot run, and bootstrap
+        # reports "Cannot find appropriate C compiler". mavericks-golang installs it the same way.
+        softwareupdate --install-rosetta --agree-to-license \
+          || { echo "::error::cannot install Rosetta; the x86_64/10.9 half's bootstrap cannot run its stage-0 here"; exit 1; }
         mc="$(ls -d /usr/local/mavericks-clang-*-cross | head -1)"
         # The pkg's payload installs an EMPTY SDKs/ scaffold (verified: `pkgutil --payload-files`
         # lists it as a bare directory, no children). The 10.9 SDK itself is fetched, cached under
