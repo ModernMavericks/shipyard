@@ -7,11 +7,13 @@ name: scan-for-key
 # reports where, never what.
 #
 # Call it from a product's release.yml between the job that signs and publish-release.yml, gated the
-# same way publish is:
+# same way publish is -- but under always(), so a run that FAILS after signing is scanned too. Its logs
+# are just as public, and were written while the key was in use (swift-runtime's first org-key bridge
+# stopped on a missing notes file right after signing, and nothing scanned it):
 #
 #   scan:
 #     needs: [build]
-#     if: needs.build.outputs.publish == 'yes'
+#     if: always() && needs.build.outputs.publish == 'yes'
 #     permissions: { actions: read, contents: read }   # actions: read = this run's job logs
 #     uses: ModernMavericks/shipyard/.github/workflows/scan-for-key.yml@v1
 #     with: { artifact: <the artifact publish-release.yml publishes> }
@@ -58,10 +60,17 @@ jobs:
           ref: ${{ inputs.shipyard-ref }}
           path: .shipyard
 
+      # By pattern, so a build that failed before uploading its artifact still gets its LOGS scanned:
+      # a name that matches nothing fails the step, a pattern that matches nothing downloads nothing.
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ inputs.artifact }}
+          pattern: ${{ inputs.artifact }}
+          merge-multiple: true
           path: dist
+
+      - name: No release artifact means a failed build -- scan its logs anyway
+        run: |
+          [ -d dist ] || { mkdir dist; echo "::notice::no ${{ inputs.artifact }} artifact (the build did not finish): scanning the logs only"; }
 
       - name: Fetch this run's finished job logs
         env:
