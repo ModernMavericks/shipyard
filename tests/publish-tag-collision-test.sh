@@ -1,5 +1,7 @@
 #!/bin/sh
-# publish-release.yml must REFUSE to publish a version whose tag already exists, and say so.
+# publish-release.yml must REFUSE to publish a version whose tag already exists, and say so -- unless
+# the run was triggered by that very tag. What the guard DECIDES is tests/assert_tag_publishable.bats;
+# this asserts the wiring: the guard exists, calls that script, and runs before the publish step.
 #
 # It cannot instead bump N and retry: the version is baked into the artifacts before publish
 # (pkgbuild --version, the pkg filename, and the appcast's <sparkle:version>, which
@@ -24,7 +26,7 @@ if not guard:
 g = guard[0]
 
 body = g.get("run") or ""
-for needle in ("git ls-remote", "re-dispatch"):
+for needle in ("assert_tag_publishable.sh",):
     if needle not in body:
         print("FAIL: the guard does not mention %r" % needle); sys.exit(1)
 

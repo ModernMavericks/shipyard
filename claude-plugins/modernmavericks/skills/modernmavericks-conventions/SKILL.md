@@ -623,6 +623,12 @@ its `main` — in the left column, that push is a release.
   published release), and deletes it after the last failure too. **Recovery is "Re-run failed jobs"**
   — the build artifacts are kept and the tag is still free — unless the caller's `main` gained a
   workflow change since the run started (the tag then 403s; re-dispatch).
+- **An existing tag refuses the publish — except the tag that triggered the run.** Two runs can compute
+  the same `-mavericks.(N+1)` and both build it; the loser must not publish and must not relabel (the
+  version is already baked into the pkg and the appcast), so it re-dispatches. But a run started by a
+  pushed tag always finds its own tag, and blanket refusal made the documented "publish from a tag"
+  model impossible — clang had no working release path at all. `assert_tag_publishable.sh` allows
+  exactly that case: the run's ref IS this version's tag, and the tag names the commit being published.
 
 ## Release notes
 
