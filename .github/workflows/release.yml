@@ -204,11 +204,27 @@ jobs:
           name: shipyard-dist
           path: dist
 
+  # Before anything is published: no log of this run, and no file about to be released, carries a
+  # piece of the signing key (publish-release.yml looks for this job's record on any signed release).
+  # Local path + shipyard-ref for the same reason as publish below: scan with the scanner being
+  # shipped, not the previous one.
+  scan:
+    needs: build
+    permissions:
+      actions: read     # this run's job logs
+      contents: read
+    uses: ./.github/workflows/scan-for-key.yml
+    with:
+      artifact: shipyard-dist
+      shipyard-ref: ${{ github.sha }}
+    secrets:
+      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+
   # Local `uses:` path -> THIS commit's publish workflow, and shipyard-ref pins the inner checkout of
   # release-assets.sh to the same commit. Publishing with @v1 would ship a version using the previous
   # version's tooling, unable to catch a defect in the tooling being shipped.
   publish:
-    needs: build
+    needs: [build, scan]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-release.yml
