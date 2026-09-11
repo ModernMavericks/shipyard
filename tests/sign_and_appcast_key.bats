@@ -45,28 +45,28 @@ refute_key_in() {  # TEXT
   [ "$status" -eq 0 ]
   [ "$(cat "$T/signer-stdin")" = "$KEY" ]
   refute_key_in "$(cat "$T/signer-argv")"
-  [[ "$(cat "$T/signer-argv")" == "-f - "* ]]
+  [[ "$(cat "$T/signer-argv")" == "-f - "* ]] || false
 }
 
 @test "under sh -x, nothing sign_and_appcast.sh prints or traces carries a piece of the key" {
   SPARKLE_PRIVATE_KEY="$KEY" run sign_and_appcast -x
   [ "$status" -eq 0 ]
-  [[ "$output" == *"sparkle:edSignature"* ]]   # it really ran, traced, to the end
+  [[ "$output" == *"sparkle:edSignature"* ]] || false   # it really ran, traced, to the end
   refute_key_in "$output"
 }
 
 @test "an unset key is refused, before anything is signed" {
-  run env -u SPARKLE_PRIVATE_KEY sh "$ROOT/scripts/sign_and_appcast.sh" --signer "$T/sign" \
+  run env -i PATH="$PATH" sh "$ROOT/scripts/sign_and_appcast.sh" --signer "$T/sign" \
     --channel-title C --version 1.2.3 --pkg-url https://example.invalid/x.pkg \
     --notes-file "$T/notes.md" --pkg "$T/x.pkg"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"SPARKLE_PRIVATE_KEY"* ]]
+  [[ "$output" == *"SPARKLE_PRIVATE_KEY"* ]] || false
   [ ! -e "$T/signer-argv" ]
 }
 
 @test "an empty key is refused, before anything is signed" {
   SPARKLE_PRIVATE_KEY= run sign_and_appcast
   [ "$status" -ne 0 ]
-  [[ "$output" == *"SPARKLE_PRIVATE_KEY"* ]]
+  [[ "$output" == *"SPARKLE_PRIVATE_KEY"* ]] || false
   [ ! -e "$T/signer-argv" ]
 }

@@ -33,14 +33,14 @@ SUFeedURL=$FEED" ]
   mkpkg "$T/p.pkg" "$K1" "$FEED" TestUpdater "$K2" "$FEED" TestCrossUpdater
   run --separate-stderr pubkey "$T/p.pkg"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"disagree"* ]]
+  [[ "$stderr" == *"disagree"* ]] || false
 }
 
 @test "a pkg that installs no updater says so" {
   mkpkg "$T/p.pkg"
   run --separate-stderr pubkey "$T/p.pkg"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"no Sparkle updater"* ]]
+  [[ "$stderr" == *"no Sparkle updater"* ]] || false
 }
 
 @test "a file that is not a pkg is refused" {

@@ -30,7 +30,7 @@ sign_and_appcast() {
   signer_signs_as "$KNEW"
   run --separate-stderr sign_and_appcast
   [ "$status" -eq 0 ]
-  [[ "$output" == *"sparkle:edSignature=\"signed-by:$KNEW\""* ]]
+  [[ "$output" == *"sparkle:edSignature=\"signed-by:$KNEW\""* ]] || false
 }
 
 @test "a signature installed clients would reject gets no appcast at all" {
@@ -38,8 +38,8 @@ sign_and_appcast() {
   signer_signs_as "$KOTHER"
   run --separate-stderr sign_and_appcast
   [ "$status" -ne 0 ]
-  [[ "$output" != *"<rss"* ]]
-  [[ "$stderr" == *"$KNEW"* ]]
+  [[ "$output" != *"<rss"* ]] || false
+  [[ "$stderr" == *"$KNEW"* ]] || false
 }
 
 @test "with no ed25519-verify beside --signer, and no --verifier, it refuses rather than skip the check" {
@@ -48,7 +48,7 @@ sign_and_appcast() {
   rm "$T/bin/ed25519-verify"
   run --separate-stderr sign_and_appcast
   [ "$status" -ne 0 ]
-  [[ "$stderr" == *"ed25519-verify"* ]]
+  [[ "$stderr" == *"ed25519-verify"* ]] || false
   mkverifier "$T/elsewhere-verify"
   run --separate-stderr sign_and_appcast --verifier "$T/elsewhere-verify"
   [ "$status" -eq 0 ]

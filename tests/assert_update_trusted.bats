@@ -29,7 +29,7 @@ live_release() {  # KEY
   mkpkg "$T/new.pkg" "$KNEW" "$FEED" TestUpdater
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KNEW"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"first release"* ]]
+  [[ "$stderr" == *"first release"* ]] || false
   [ -z "$output" ]
 }
 
@@ -37,7 +37,7 @@ live_release() {  # KEY
   mkpkg "$T/new.pkg" "$KNEW" "$FEED" TestUpdater
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KOTHER"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"$KNEW"* ]]
+  [[ "$stderr" == *"$KNEW"* ]] || false
 }
 
 @test "steady state: signed by the key installed updaters trust -> trusted" {
@@ -52,7 +52,7 @@ live_release() {  # KEY
   mkpkg "$T/new.pkg" "$KNEW" "$FEED" TestUpdater
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KNEW"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"$KOLD"* ]]
+  [[ "$stderr" == *"$KOLD"* ]] || false
 }
 
 @test "a bridge release (signed by the old key, shipping a new one) -> trusted, and says what's next" {
@@ -60,8 +60,8 @@ live_release() {  # KEY
   mkpkg "$T/new.pkg" "$KNEW" "$FEED" TestUpdater
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KOLD"
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"$KNEW"* ]]
-  [[ "$stderr" == *"next release"* ]]
+  [[ "$stderr" == *"$KNEW"* ]] || false
+  [[ "$stderr" == *"next release"* ]] || false
 }
 
 @test "--allow-key-change lets a hard key change through, signed by the new key and nothing else" {
@@ -69,7 +69,7 @@ live_release() {  # KEY
   mkpkg "$T/new.pkg" "$KNEW" "$FEED" TestUpdater
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KNEW" --allow-key-change
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"will not accept"* ]]
+  [[ "$stderr" == *"will not accept"* ]] || false
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KOTHER" --allow-key-change
   [ "$status" -eq 1 ]
 }
@@ -78,7 +78,7 @@ live_release() {  # KEY
   mkpkg "$T/new.pkg"
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KOLD"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"--pubkey"* ]]
+  [[ "$stderr" == *"--pubkey"* ]] || false
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KOLD" --pubkey "$KOLD"
   [ "$status" -eq 0 ]
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KOTHER" --pubkey "$KOLD"
@@ -91,7 +91,7 @@ live_release() {  # KEY
   mkpkg "$T/new.pkg" "$KNEW" "http://127.0.0.1:9/appcast.xml" TestUpdater
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KNEW"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"cannot read"* ]]
+  [[ "$stderr" == *"cannot read"* ]] || false
 }
 
 @test "a live feed that offers no enclosure fails closed" {
@@ -99,7 +99,7 @@ live_release() {  # KEY
   mkpkg "$T/new.pkg" "$KNEW" "$FEED" TestUpdater
   run --separate-stderr trusted "$T/new.pkg" "signed-by:$KNEW"
   [ "$status" -eq 1 ]
-  [[ "$stderr" == *"enclosure"* ]]
+  [[ "$stderr" == *"enclosure"* ]] || false
 }
 
 @test "requires --pkg, --signature and --verifier" {
