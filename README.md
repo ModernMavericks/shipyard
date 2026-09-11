@@ -4,12 +4,39 @@ Build goop for Mac OS X 10.9 Mavericks.
 
 Features: yes. Whatever helps native builds to succeed and cross builds to match.
 
-## Install
+## Install (once)
+
+Install shipyard from the pkg. Download it from the latest release and install it:
+
+```sh
+gh release download -R ModernMavericks/shipyard --pattern '*.pkg'
+sudo installer -pkg mavericks-shipyard-*.pkg -target /
+```
+
+It lands in `/usr/local/mavericks-shipyard` and registers with whatever cmake is on your `PATH`. It
+also keeps itself current: its updater checks daily and installs each new release. The same pkg works
+on Intel, on Apple Silicon and on 10.9.
+
+With no cmake, the shell scripts still work and the CMake side is skipped with a message. To finish,
+install any cmake, then run
+`sh /usr/local/mavericks-shipyard/scripts/register-with-cmake.sh /usr/local/mavericks-shipyard`, or
+wait for the next update, which runs the same step.
+
+### Developing shipyard itself
+
+`cmake --install` is for working on shipyard, not for consuming it. Install into a prefix whose `bin/`
+is **not** on your `PATH`:
 
 ```sh
 cmake -S . -B build
-cmake --install build --prefix "$HOME/.local"
+cmake --install build --prefix "$HOME/.local/opt/shipyard-dev"
 ```
+
+That points your registry entry at the dev copy. Why not `~/.local` or the default `/usr/local`?
+`find_package` searches prefixes derived from `PATH` before it reads the user package registry. A copy
+under such a prefix (`~/.local` when `~/.local/bin` is on `PATH`, or `/usr/local`) would therefore go
+on shadowing the pkg, even after the registry points back at it. The pkg points the registry back at
+itself every time it installs or updates, so a dev copy stays in effect only until the next update.
 
 ## Use
 
@@ -30,7 +57,7 @@ In your `CMakePresets.json`:
 ```json
 {
   "version": 6,
-  "include": ["$env{HOME}/.local/share/cmake/MavericksShipyard/mavericks-presets.json"],
+  "include": ["/usr/local/mavericks-shipyard/mavericks-presets.json"],
   "configurePresets": [
     { "name": "native", "inherits": "mavericks-native" },
     { "name": "cross",  "inherits": "mavericks-cross"  }
