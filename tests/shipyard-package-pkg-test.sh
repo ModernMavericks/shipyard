@@ -7,7 +7,7 @@
 # BEHAVIORAL, not grep: an earlier cut of this test grepped the postinstall for `uname -m` and
 # `arm64` and passed a postinstall that loaded the x86_64 agent on every box. So this RUNS the
 # postinstall the way Installer does ($1 pkg, $2 install location, $3 target volume) against a fixture
-# volume holding both slices, with uname/stat/sudo stubbed, and checks what it actually did.
+# volume holding both slices, with sysctl/uname/stat/sudo stubbed, and checks what it actually did.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
@@ -34,15 +34,35 @@ for slice in native cross; do
   printf 'echo %s >> "%s"\n' "$slice" "$work/sourced.log" > "$scr/agent-load-$slice.sh"
 done
 
-# Stubs first on PATH. uname reports the forced arch, stat the console user, and sudo only records
-# its argv -- one [arg] per argument, so a word-split or a dropped quote shows up as a mismatch.
+# Stubs first on PATH. sudo only records its argv -- one [arg] per argument, so a word-split or a
+# dropped quote shows up as a mismatch. sysctl and stat answer ONLY the exact question the postinstall
+# must ask; anything else is logged and exits 97, so a regression to `stat -f %u` (a uid, not a name)
+# or to another sysctl cannot pass on a stub that ignores its arguments.
+#
+# sysctl hw.optional.arm64 is the forced "hardware": 1 (Apple Silicon), 0 (Intel on a modern macOS),
+# or absent (10.9 has no such name: nothing on stdout, an error, exit 1). uname -m always says x86_64,
+# which is what it says under Rosetta -- where Installer runs a package's scripts on Apple Silicon
+# unless the Distribution declares arm64 -- so a postinstall that trusts uname -m picks the wrong slice.
 bin="$work/bin"; mkdir -p "$bin"
+cat > "$bin/sysctl" <<'EOF'
+#!/bin/sh
+if [ "$#" -ne 2 ] || [ "$1" != -n ] || [ "$2" != hw.optional.arm64 ]; then
+  echo "sysctl $*" >> "$FAKE_STUB_ERRORS"; exit 97
+fi
+case "$FAKE_ARM64" in
+  absent) echo "second level name optional in hw.optional.arm64 is invalid" >&2; exit 1 ;;
+  *) echo "$FAKE_ARM64" ;;
+esac
+EOF
 cat > "$bin/uname" <<'EOF'
 #!/bin/sh
-echo "$FAKE_ARCH"
+echo x86_64
 EOF
 cat > "$bin/stat" <<'EOF'
 #!/bin/sh
+if [ "$#" -ne 3 ] || [ "$1" != -f ] || [ "$2" != %Su ] || [ "$3" != /dev/console ]; then
+  echo "stat $*" >> "$FAKE_STUB_ERRORS"; exit 97
+fi
 echo "$FAKE_USER"
 EOF
 cat > "$bin/sudo" <<'EOF'
@@ -51,7 +71,7 @@ for a in "$@"; do printf '[%s]' "$a"; done >> "$FAKE_SUDO_LOG"
 echo >> "$FAKE_SUDO_LOG"
 exit "${FAKE_SUDO_RC:-0}"
 EOF
-chmod +x "$bin/uname" "$bin/stat" "$bin/sudo"
+chmod +x "$bin/sysctl" "$bin/uname" "$bin/stat" "$bin/sudo"
 
 # A target volume on which the pkg has just laid down its payload: BOTH slices, both agents.
 lay_down_volume() {  # $1 = volume root
@@ -63,14 +83,16 @@ lay_down_volume() {  # $1 = volume root
   : > "$1/$PAYLOAD/scripts/register-with-cmake.sh"
 }
 
-# Run the postinstall as Installer would. Sets $rc, $out, $sourced, $sudo_argv.
-run_postinstall() {  # $1 = arch  $2 = console user  $3 = target volume as passed in $3
-  : > "$work/sourced.log"; : > "$work/sudo.log"
+# Run the postinstall as Installer would. Sets $rc, $out, $sourced, $sudo_argv, $stub_errors.
+run_postinstall() {  # $1 = hw.optional.arm64 (1|0|absent)  $2 = console user  $3 = target volume as passed in $3
+  : > "$work/sourced.log"; : > "$work/sudo.log"; : > "$work/stub-errors.log"
   rc=0
-  out="$(PATH="$bin:$PATH" FAKE_ARCH="$1" FAKE_USER="$2" FAKE_SUDO_LOG="$work/sudo.log" \
+  out="$(PATH="$bin:$PATH" FAKE_ARM64="$1" FAKE_USER="$2" FAKE_SUDO_LOG="$work/sudo.log" \
+         FAKE_STUB_ERRORS="$work/stub-errors.log" \
          sh "$scr/postinstall" /fake/mavericks-shipyard.pkg "$3" "$3" 2>&1)" || rc=$?
   sourced="$(cat "$work/sourced.log")"
   sudo_argv="$(cat "$work/sudo.log")"
+  stub_errors="$(cat "$work/stub-errors.log")"
 }
 
 fail() { echo "FAIL: $*"; [ -z "${out:-}" ] || printf '%s\n' "$out" | sed 's/^/    | /'; exit 1; }
@@ -79,10 +101,11 @@ fail() { echo "FAIL: $*"; [ -z "${out:-}" ] || printf '%s\n' "$out" | sed 's/^/ 
 # /Library/LaunchAgents at the next login, so merely not loading it now is not enough), and register
 # as the console user through their login shell -- the postinstall is root with Installer's minimal
 # PATH, so "whatever cmake is on PATH" can only mean the developer's PATH, and HOME must be theirs.
-check_slice() {  # $1 = arch  $2 = slice kept  $3 = label kept  $4 = app kept  $5 = label dropped  $6 = app dropped  $7 = volume arg
+check_slice() {  # $1 = hw.optional.arm64  $2 = slice kept  $3 = label kept  $4 = app kept  $5 = label dropped  $6 = app dropped  $7 = volume arg
   vol="$work/vol"; lay_down_volume "$vol"
   run_postinstall "$1" alice "$7"
   [ "$rc" -eq 0 ] || fail "$1: postinstall exited $rc"
+  [ -z "$stub_errors" ] || fail "$1: asked a stub the wrong question: $stub_errors"
   [ "$sourced" = "$2" ] || fail "$1: sourced '$sourced', want exactly '$2'"
   [ ! -e "$vol/Library/LaunchAgents/$5.plist" ] || fail "$1: the other slice's agent is still installed; launchd will load it at login"
   [ ! -e "$vol/$APPDIR/$6" ] || fail "$1: the other slice's app is still installed"
@@ -91,15 +114,18 @@ check_slice() {  # $1 = arch  $2 = slice kept  $3 = label kept  $4 = app kept  $
   want="[-u][alice][-i][sh][$vol/$PAYLOAD/scripts/register-with-cmake.sh][$vol/$PAYLOAD]"
   [ "$sudo_argv" = "$want" ] || fail "$1: sudo got '$sudo_argv', want '$want'"
 }
-check_slice arm64  cross  "$CROSS_LABEL"  "$CROSS_APP"  "$NATIVE_LABEL" "$NATIVE_APP" "$work/vol"
-# x86_64 also passes the volume with a trailing slash ("/" is what Installer passes for the boot
-# volume), which must not double up into "//usr/local/...".
-check_slice x86_64 native "$NATIVE_LABEL" "$NATIVE_APP" "$CROSS_LABEL"  "$CROSS_APP"  "$work/vol/"
+# Apple Silicon keeps the arm64 slice even though uname -m (stubbed as under Rosetta) says x86_64.
+check_slice 1      cross  "$CROSS_LABEL"  "$CROSS_APP"  "$NATIVE_LABEL" "$NATIVE_APP" "$work/vol"
+# Intel on a modern macOS answers 0. It also passes the volume with a trailing slash ("/" is what
+# Installer passes for the boot volume), which must not double up into "//usr/local/...".
+check_slice 0      native "$NATIVE_LABEL" "$NATIVE_APP" "$CROSS_LABEL"  "$CROSS_APP"  "$work/vol/"
+# 10.9 has no hw.optional.arm64 at all: an error and no output must mean native, not a failed install.
+check_slice absent native "$NATIVE_LABEL" "$NATIVE_APP" "$CROSS_LABEL"  "$CROSS_APP"  "$work/vol"
 
 # Nobody at the console (loginwindow, a remote install): there is no developer to register for, and
 # registering as root would write a root-owned entry nobody's cmake reads. Skip, and SAY how to finish.
 lay_down_volume "$work/vol"
-run_postinstall x86_64 root "$work/vol"
+run_postinstall absent root "$work/vol"
 [ "$rc" -eq 0 ] || fail "console user root: postinstall exited $rc"
 [ -z "$sudo_argv" ] || fail "console user root: sudo must not be called; got '$sudo_argv'"
 printf '%s' "$out" | grep -q "sh \"$work/vol/$PAYLOAD/scripts/register-with-cmake.sh\" \"$work/vol/$PAYLOAD\"" \
@@ -109,7 +135,7 @@ printf '%s' "$out" | grep -q "sh \"$work/vol/$PAYLOAD/scripts/register-with-cmak
 # consumes only that half. A cmake-less box (register-with-cmake.sh refuses) must still install.
 lay_down_volume "$work/vol"
 FAKE_SUDO_RC=1; export FAKE_SUDO_RC
-run_postinstall arm64 alice "$work/vol"
+run_postinstall 1 alice "$work/vol"
 unset FAKE_SUDO_RC
 [ "$rc" -eq 0 ] || fail "a failed registration must not fail the install; postinstall exited $rc"
 
@@ -122,10 +148,13 @@ if out="$(sh "$S" --payload "$work/payload" --app-native "$work/apps/$CROSS_APP"
 fi
 printf '%s' "$out" | grep -q "$NATIVE_APP" || fail "the refusal must name the expected app"
 
-# And the packager must NOT restrict the installable architecture. Non-comment lines only: the script
-# explains in prose why it omits the flag.
-if grep -v '^[[:space:]]*#' "$S" | grep -q -- '--host-arch'; then
-  echo "FAIL: --host-arch would stop this installing on one of the two boxes"; exit 1
-fi
+# The Distribution must declare BOTH architectures, and exactly those. Without arm64 in it, Installer
+# on Apple Silicon offers Rosetta for a pkg with scripts and runs them translated. Only one arch would
+# stop the pkg installing on the other box. Non-comment lines only: the script explains the flag in prose.
+out=""
+host_arch="$(grep -v '^[[:space:]]*#' "$S" | grep -o -- '--host-arch[[:space:]]*[^[:space:]]*' || true)"
+[ "$host_arch" = "--host-arch x86_64,arm64" ] \
+  || fail "package-pkg.sh must pass exactly --host-arch x86_64,arm64 to set_install_floor.sh; got '${host_arch:-nothing}'"
+
 
 echo "PASS: shipyard-package-pkg"

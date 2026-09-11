@@ -6,7 +6,10 @@
 # it prompts for Rosetta on Apple Silicon; two pkgs would make someone choose, and choosing wrong is
 # silent. So: one artifact, no prompt, no choice.
 #
-# NO --host-arch, deliberately (mavericks-ed25519 does the same): the pkg must install on either box.
+# --host-arch x86_64,arm64 -- BOTH, which is the opposite of the restriction the family's "no
+# --host-arch" rule forbids (that rule stops a pkg being limited to ONE arch, which would refuse the
+# other box). Without arm64 in hostArchitectures, Installer on Apple Silicon offers Rosetta for a pkg
+# that has scripts and runs those scripts translated -- the very prompt this pkg exists to avoid.
 #
 # The postinstall is shipyard's own (not stage_updater.sh --scripts-out), because it must also pick an
 # arch and register with cmake. It sources an agent-load fragment rendered by --snippet-out, exactly as
@@ -65,9 +68,13 @@ set -u
 ROOT="${3:-/}"; ROOT="${ROOT%/}"
 PAYLOAD="$ROOT$PAYLOAD_DIR"
 
-case "$(uname -m)" in
-  arm64) keep=cross;  drop_label=$NATIVE_LABEL; drop_app=$NATIVE_APP ;;
-  *)     keep=native; drop_label=$CROSS_LABEL;  drop_app=$CROSS_APP ;;  # x86_64 (and anything else)
+# Ask the HARDWARE, not `uname -m`. Under Rosetta uname -m says x86_64 on Apple Silicon, and Installer
+# runs a pkg's scripts under Rosetta whenever the Distribution does not declare arm64 -- so a uname
+# test keeps the x86_64 slice on exactly the box it must not. hw.optional.arm64 is 1 on Apple Silicon
+# even when translated. Intel answers 0; 10.9 has no such name (an error, no output). Both are native.
+case "$(sysctl -n hw.optional.arm64 2>/dev/null)" in
+  1) keep=cross;  drop_label=$NATIVE_LABEL; drop_app=$NATIVE_APP ;;
+  *) keep=native; drop_label=$CROSS_LABEL;  drop_app=$CROSS_APP ;;  # Intel, 10.9, or no answer
 esac
 
 # REMOVE the other slice, not merely skip loading it: launchd autoloads everything in
@@ -158,12 +165,14 @@ comp="$WORK/component/mavericks-shipyard.pkg"
 sh "$SELF/build_component_pkg.sh" --root "$STAGE" --identifier "$ID" --version "$VER" \
   --install-location / --scripts "$SCR" --out "$comp" >&2
 
-# No arch restriction here: this must install on Intel and Apple Silicon alike.
+# Both arches, so this installs on Intel and Apple Silicon alike AND its scripts run natively on
+# Apple Silicon (see the header). Declaring both restricts nothing.
 sh "$SELF/set_install_floor.sh" \
   --identifier "$ID" \
   --title "Mavericks Shipyard ${VER}" \
   --component "$comp" \
   --out "$OUT" \
+  --host-arch x86_64,arm64 \
   --require-scripts >&2
 
 echo "built $OUT" >&2
