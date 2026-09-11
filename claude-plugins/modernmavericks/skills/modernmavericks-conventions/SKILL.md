@@ -1049,10 +1049,10 @@ it here.** A silently dropped increment is how the family drifted in the first p
 - [x] Automerge policy stated in the preset — done 2026-07-30. **Ship-if-green**: patch, minor and
       major automerge once the build passes; fix forward in a `-mavericks.N+1` release. Exceptions
       only where a bad bump would build fine and be wrong, and the gate demands the reason
-- [ ] **Remove `ed25519-sign -s`** (the key as an argv; it warns meanwhile). Exit condition: this
-      repo's `sign_and_appcast.sh` passes the key with `-f -` on `main` AND mavericks-ed25519 has
-      released a `-f`-capable `ed25519-sign` — `sign_and_appcast.sh` signs with the *latest* ed25519
-      release, so dropping `-s` any earlier breaks every product's signing. Transitional since 2026-09-10
+- [x] **Remove `ed25519-sign -s`** (the key as an argv) — done 2026-09-11 (mavericks-ed25519
+      3efe029), once `sign_and_appcast.sh` passed the key with `-f -` on `main` (7369bd2) and
+      ed25519 20221003-mavericks.4 had shipped `-f`; shipyard v1.0.151 signed through that path.
+      The *release* dropping `-s` is the next ed25519 release after 3efe029
 - [ ] **Every signing product calls `scan-for-key.yml`** (golang, openssh, tailscale, legacysupport,
       swift-runtime, porthole, container-tools, clang, compat, magic-trackpad2 — and shipyard once it
       signs). Exit condition: all of them have the job; then `require_key_scan.sh` turns its warning
