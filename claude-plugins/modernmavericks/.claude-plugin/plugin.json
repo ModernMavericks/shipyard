@@ -1,5 +1,7 @@
 {
   "name": "modernmavericks",
-  "version": "0.2.0",
-  "description": "Conventions for building ModernMavericks (mavericks-*) projects: shipyard usage, Renovate/automerge policy, versioning, release workflow, Sparkle updater, and warranted-deviation judgment."
+  "description": "Conventions for building ModernMavericks (mavericks-*) projects: shipyard usage, Renovate/automerge policy, versioning, release workflow, Sparkle updater, and warranted-deviation judgment.",
+  "author": {
+    "name": "Amitai Schleier"
+  }
 }

@@ -1005,6 +1005,20 @@ in the same commit.
    {"extraKnownMarketplaces": {"modernmavericks": {"source": {"source": "github", "repo": "ModernMavericks/shipyard"}}},
     "enabledPlugins": {"modernmavericks@modernmavericks": true}}
    ```
+   **That file alone loads nothing.** It registers the marketplace and enables the plugin, but since
+   Claude Code 2.1.195 a project setting does not *install* a plugin from an external source — so a
+   fresh clone, a new repo and a new contributor all get no conventions, silently. Each contributor
+   installs once, at **user** scope, which then covers every family repo:
+   ```sh
+   claude plugin install modernmavericks@modernmavericks --scope user
+   ```
+   and turns on auto-update for the marketplace (`/plugin` → Marketplaces → modernmavericks → Enable
+   auto-update; it is off by default for third-party marketplaces). Do NOT install at project scope:
+   it covers only that one path, it pins whatever version was current, and `plugin uninstall --scope
+   project` later rewrites this tracked settings file (it drops the `enabledPlugins` entry).
+   `plugin.json` deliberately has no `version`, so every push to shipyard's `main` is an update —
+   with one pinned, contributors got an update only when someone remembered to bump it (three bumps
+   against ten-plus skill edits left installs 200 lines behind).
 
 ## Consolidation backlog
 

@@ -69,3 +69,16 @@ mavericks_add_updater_app(
   CONFIRM_BODY  "Foo was updated in the background."
 )
 ```
+
+## Conventions for Claude Code
+
+The family's conventions ship as the `modernmavericks` Claude Code plugin, from this repo's
+marketplace. A product repo's checked-in `.claude/settings.json` registers the marketplace and
+enables the plugin, but that alone installs nothing. Install it once, for every family repo:
+
+```sh
+claude plugin install modernmavericks@modernmavericks --scope user
+```
+
+then turn on auto-update in `/plugin` → Marketplaces → modernmavericks. The plugin carries no
+version, so every push to `main` is an update.
