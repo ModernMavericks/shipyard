@@ -143,10 +143,76 @@ jobs:
               ;;
           esac
 
+      # Up to three attempts, each from a clean slate. action-gh-release creates the release as a DRAFT,
+      # uploads, and only then publishes it -- which is when the tag is minted -- and it does not retry a
+      # failed upload. So one dropped connection stranded a draft with no tag: golang's
+      # 1.26.8-mavericks.3 lost its native .pkg to "other side closed", and nothing downstream could see
+      # it, because to a tag-reading world it did not exist. Between attempts every draft of THIS tag is
+      # deleted (delete-draft-release.sh touches nothing published and nothing of another tag), and if
+      # the last attempt fails too, the draft goes with it and the error says what to do.
       - name: Publish
+        id: publish1
+        continue-on-error: true
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.version }}
           target_commitish: ${{ inputs.target-commitish || github.sha }}
           body_path: dist/${{ inputs.notes-file }}
           files: ${{ steps.assets.outputs.files }}
+
+      - name: Publish failed -- clear its draft before retrying
+        if: steps.publish1.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VER: ${{ inputs.version }}
+        run: |
+          echo "::warning::publishing $VER failed (attempt 1 of 3); retrying from a clean slate in 30s"
+          sh .shipyard/scripts/delete-draft-release.sh "$REPO" "$VER"
+          sleep 30
+
+      - name: Publish (attempt 2)
+        id: publish2
+        if: steps.publish1.outcome == 'failure'
+        continue-on-error: true
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.version }}
+          target_commitish: ${{ inputs.target-commitish || github.sha }}
+          body_path: dist/${{ inputs.notes-file }}
+          files: ${{ steps.assets.outputs.files }}
+
+      - name: Publish failed again -- clear its draft before the last attempt
+        if: steps.publish2.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VER: ${{ inputs.version }}
+        run: |
+          echo "::warning::publishing $VER failed (attempt 2 of 3); last attempt in 90s"
+          sh .shipyard/scripts/delete-draft-release.sh "$REPO" "$VER"
+          sleep 90
+
+      - name: Publish (attempt 3)
+        id: publish3
+        if: steps.publish2.outcome == 'failure'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.version }}
+          target_commitish: ${{ inputs.target-commitish || github.sha }}
+          body_path: dist/${{ inputs.notes-file }}
+          files: ${{ steps.assets.outputs.files }}
+
+      - name: Nothing was published -- remove the draft
+        # Keyed on attempt 1, not attempt 3: a cleanup step that fails between attempts skips the rest,
+        # and must still not leave its draft behind.
+        if: failure() && steps.publish1.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VER: ${{ inputs.version }}
+        run: |
+          sh .shipyard/scripts/delete-draft-release.sh "$REPO" "$VER"
+          echo "::error::publishing $VER failed after retrying; its draft is deleted and no tag was minted, so nothing was published."
+          echo "::error::Re-run this run's failed jobs to publish the same build. If the caller's main has moved since this run started (a workflow change makes the tag 403), re-dispatch instead."
+          exit 1

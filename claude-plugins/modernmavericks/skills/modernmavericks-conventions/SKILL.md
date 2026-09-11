@@ -614,6 +614,15 @@ its `main` — in the left column, that push is a release.
   swift-runtime set no body at all, because that wiring was per-repo.
 - It publishes with `action-gh-release` (`tag_name` + `target_commitish`), which mints the tag inline.
   The dispatch-cut repos need that: a `GITHUB_TOKEN`-pushed tag triggers nothing.
+- **A failed upload must not strand a draft.** `action-gh-release` creates the release as a *draft*,
+  uploads, and publishes (minting the tag) only once every upload succeeds — and it does not retry a
+  failed upload. golang's `1.26.8-mavericks.3` lost one `.pkg` to `other side closed` and sat as a
+  tagless draft: invisible to Renovate, the appcast and every sibling, its ingredient bump unshipped,
+  with only a red run to show for it. So `publish-release.yml` makes three attempts, deleting this
+  tag's draft before each retry (`delete-draft-release.sh`: drafts of exactly this tag, never a
+  published release), and deletes it after the last failure too. **Recovery is "Re-run failed jobs"**
+  — the build artifacts are kept and the tag is still free — unless the caller's `main` gained a
+  workflow change since the run started (the tag then 403s; re-dispatch).
 
 ## Release notes
 
