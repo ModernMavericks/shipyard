@@ -20,6 +20,44 @@ else()
 endif()
 project(MavericksShipyard VERSION ${_MSC_VERSION} LANGUAGES NONE)
 
+# The Sparkle updater that keeps an installed shipyard current. OPT-IN: shipyard is LANGUAGES NONE
+# and compiles nothing, so `cmake --install` works on a box with no ObjC compiler -- and the payload
+# stays buildable where there is no Objective-C at all. Only the pkg job turns this on.
+#
+# One target, configured TWICE (x86_64/10.9 and arm64) rather than two targets: CMAKE_OSX_ARCHITECTURES
+# and the deployment target are directory-scoped, and arm64 has no 10.9. mavericks-golang does the
+# same with build/updater and build/updater-cross.
+option(SHIPYARD_BUILD_UPDATER "Build the Sparkle updater app (needed only to package the pkg)" OFF)
+if(SHIPYARD_BUILD_UPDATER)
+  enable_language(OBJC)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/MavericksSparkle.cmake")
+
+  # The two slices are staged into ONE pkg (Task 3), so same-named .app bundles would overwrite each
+  # other -- unlike mavericks-golang's updater, which builds one variant per invocation into its own
+  # dir. Give each slice its own target NAME (mirroring mavericks-golang's GoUpdater/GoCrossUpdater)
+  # as well as its own bundle-id suffix, matching mavericks-clang's identifiers.
+  set(_upd_name "MavericksShipyardUpdater")
+  set(_upd_suffix "")
+  if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+    set(_upd_name "MavericksShipyardCrossUpdater")
+    set(_upd_suffix "-cross")
+  endif()
+
+  mavericks_add_updater_app(
+    NAME ${_upd_name}
+    PRODUCT_NAME "Mavericks Shipyard"
+    BUNDLE_ID "dev.modernmavericks.mavericks-shipyard${_upd_suffix}"
+    FEED_URL "https://github.com/ModernMavericks/shipyard/releases/latest/download/appcast.xml"
+    VERSION "${PROJECT_VERSION}"
+    LOG_PREFIX "MavShipyardUpdater"
+    CONFIRM_TITLE "Mavericks Shipyard updated"
+    CONFIRM_BODY "The shared CMake modules and scripts in /usr/local/mavericks-shipyard were updated."
+    RELAUNCH_MARKER "/tmp/.mavericks-shipyard-updater-relaunched"
+    ALLOW_GENERIC
+    # no PANE_HINT_KEY -> a background-found update posts an NSUserNotification. shipyard has no UI.
+  )
+endif()
+
 # This project ships CMake modules + helper scripts (no compiled artifacts). It
 # installs itself as a find_package() config package so consumers can just:
 #   find_package(MavericksShipyard REQUIRED)
