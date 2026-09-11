@@ -399,6 +399,17 @@ if [ "$hook_tracked" = no ] && ! grep -q 'No upstream release notes: *[^ ]' INGR
   fi
 fi
 
+# 12. A workflow that signs proves its logs don't carry the signing key. A run of sign_and_appcast.sh
+# has SPARKLE_PRIVATE_KEY in its environment and a public log; scan-for-key.yml (between the signing
+# job and publish, under always()) scans that run's logs and release files for any piece of the key,
+# and publish-release.yml REFUSES a signed release without its record. Checked here so a repo that
+# signs without the scan job fails its own PR, not its next release.
+if ci_mentions 'sign_and_appcast'; then
+  ci_mentions 'scan-for-key.yml' \
+    || fail "a workflow signs (sign_and_appcast.sh) but none calls scan-for-key.yml — publish-release.yml refuses a signed release with no scan record" \
+            "add a scan job between the signing job and publish, under always() (the snippet is at the top of shipyard's scan-for-key.yml), and make publish need it"
+fi
+
 # LAST, after every check: this line used to sit mid-script, so checks appended below it printed
 # "ok" and then failed in the same run.
 [ "$status" -eq 0 ] && echo "check-family-conventions: ok"

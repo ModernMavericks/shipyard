@@ -790,7 +790,8 @@ signal (see the auto-merge intent above — fix runtime regressions in `-maveric
   separate workflow because reading logs needs `actions: read` and a called workflow can't ask for
   more than its caller grants — adding it to `publish-release.yml` would break every product's
   publish. `publish-release.yml` instead looks for the scan's record on any signed release
-  (`require_key_scan.sh`): a warning until every signing product has the job, then an error.
+  (`require_key_scan.sh`) and **refuses to publish** without it; `check-family-conventions.sh` fails a
+  repo whose workflows sign without calling `scan-for-key.yml`, so the gap shows on a PR first.
 - **A signature must satisfy the clients ALREADY INSTALLED — checked before the appcast exists.** A
   Sparkle client verifies against the `SUPublicEDKey` of the updater it has, which came from the pkg
   the feed offered last time: not the repo's `.pub`, and not the key the new pkg ships.
@@ -957,6 +958,7 @@ none of which anything detected. A convention that is not checked is a conventio
 | Every workflow parses **with duplicate keys rejected** | A second `with:` on one step is legal YAML — last key wins — so ordinary parsers accept it and GitHub refuses to run the workflow. No other gate can catch it, because CI never starts |
 | No `INGREDIENTS.md` row marked ❌ unless it says **untrackable** | An ingredient nobody tracks goes stale silently; a bare ❌ reads as an oversight rather than a decision |
 | A **committed** `build/` or `scripts/upstream-release-notes-url.sh`, or an `INGREDIENTS.md` line `No upstream release notes: <reason>` | A `-mavericks.1` exists to ship someone else's changes; notes that name the version without linking what changed leave the reader to go find it |
+| A workflow that runs `sign_and_appcast.sh` has some workflow calling `scan-for-key.yml` | A signing run's logs are public and GitHub masks only the literal secret; `publish-release.yml` refuses a signed release with no scan record, and this catches the missing job on a PR instead |
 | If `lines/` exists, every `lines/<id>/UPSTREAM_VERSION` has its OWN **capped** Renovate manager | An uncapped line walks onto the next major it was never built for; an unmanaged line goes stale silently; one manager spanning lines cannot cap each |
 
 Wire it with the reusable workflow — three lines, and it never changes when a check is added:
@@ -1060,13 +1062,11 @@ it here.** A silently dropped increment is how the family drifted in the first p
       3efe029), once `sign_and_appcast.sh` passed the key with `-f -` on `main` (7369bd2) and
       ed25519 20221003-mavericks.4 had shipped `-f`; shipyard v1.0.151 signed through that path.
       The *release* dropping `-s` is the next ed25519 release after 3efe029
-- [ ] **Every signing product calls `scan-for-key.yml`** — done 2026-09-11 for openssh, tailscale,
-      legacysupport, swift-runtime, porthole, golang, container-tools, clang, shipyard and
-      magic-trackpad2 (its CI repaired and back on shipyard, v0.5.3); left: compat (not yet on
-      GitHub). Exit condition: all of them have the job; then `require_key_scan.sh` turns its warning
-      into an error (flip `tests/require_key_scan.bats` with it), and `check-family-conventions.sh`
-      fails a `release.yml` that runs `sign_and_appcast.sh` without calling `scan-for-key.yml`.
-      Transitional since 2026-09-10
+- [x] **Every signing product calls `scan-for-key.yml`** — done 2026-09-11: openssh, tailscale,
+      legacysupport, swift-runtime, porthole, golang, container-tools, clang, magic-trackpad2 and
+      shipyard. `require_key_scan.sh` now refuses a signed release with no scan record, and
+      `check-family-conventions.sh` (check 12) fails a repo that signs without the job. compat is
+      exempt by omission: it is not on GitHub
 - [ ] **North star, not yet designed:** should a product repo carry build machinery at all? One
       declarative config per repo (upstream, verification, binaries, ingredients, updater) that
       shipyard turns into the build, package, release, and checks — a repo that cannot express a

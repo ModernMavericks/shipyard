@@ -393,6 +393,24 @@ mkrepo "$work/u3"; (cd "$work/u3" && git rm -q --cached build/upstream-release-n
 if out="$(cd "$work/u3" && sh "$S" 2>&1)"; then echo "FAIL an uncommitted hook should fail"; exit 1; fi
 printf '%s\n' "$out" | grep -qi 'not committed' || { echo "FAIL should say it is not committed: $out"; exit 1; }
 
+# 12. A workflow that signs must call scan-for-key.yml -- publish-release.yml refuses a signed
+# release without its record, and a missing job should fail a PR here, not a release there.
+mkrepo "$work/k"
+printf '      - run: sh "$SHIPYARD_SCRIPTS/sign_and_appcast.sh" --pkg dist/x.pkg > dist/appcast.xml\n' \
+  >> "$work/k/.github/workflows/release.yml"
+(cd "$work/k" && git add -A) >/dev/null 2>&1
+if out="$(cd "$work/k" && sh "$S" 2>&1)"; then echo "FAIL a signing workflow with no scan job should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'scan-for-key.yml' || { echo "FAIL should name scan-for-key.yml: $out"; exit 1; }
+cat >> "$work/k/.github/workflows/release.yml" <<'YML'
+  scan:
+    needs: [build]
+    if: always()
+    uses: ModernMavericks/shipyard/.github/workflows/scan-for-key.yml@v1
+    with: { artifact: dist }
+YML
+(cd "$work/k" && git add -A) >/dev/null 2>&1
+(cd "$work/k" && sh "$S" >/dev/null) || { echo "FAIL a signing workflow with a scan job should pass"; exit 1; }
+
 # A failing run must NOT also print "ok". The success line used to sit mid-script, so checks appended
 # after it (7, 8, 9) printed "check-family-conventions: ok" and THEN failed -- the exact "output says
 # it passed while it did not" shape these gates exist to prevent.

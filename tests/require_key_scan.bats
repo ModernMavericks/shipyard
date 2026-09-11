@@ -2,8 +2,8 @@ bats_require_minimum_version 1.5.0
 
 # require_key_scan.sh DIST RECORD_DIR -- publish-release.yml's gate: a release that was signed (some
 # file in it carries a sparkle:edSignature) must come with scan-for-key.yml's record that this run's
-# logs and files were scanned for the key. PHASE 1 of the rollout: a missing record WARNS. Once every
-# signing product calls scan-for-key.yml it becomes an error (SKILL.md backlog), and so does this test.
+# logs and files were scanned for the key. Every signing product calls scan-for-key.yml now, so a
+# missing record is an error: the release is refused.
 setup() {
   ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   T="$BATS_TEST_TMPDIR"
@@ -27,10 +27,10 @@ signed() { printf '<enclosure url="u" sparkle:edSignature="c2ln" length="1" />\n
   [[ "$output" == *"scanned 2 job logs"* ]] || false
 }
 
-@test "phase 1: a signed release with no scan record warns, naming what to add" {
+@test "a signed release with no scan record is refused, naming what to add" {
   signed
   run gate
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"::warning::"* ]] || false
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"::error::"* ]] || false
   [[ "$output" == *"scan-for-key.yml"* ]] || false
 }

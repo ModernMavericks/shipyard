@@ -10,8 +10,9 @@
 # `contents: write` alone, so asking would break every publish in the family at once. The signing
 # products call scan-for-key.yml instead; this is where its absence becomes visible for all of them.
 #
-# PHASE 1 of the rollout: a missing record WARNS. It becomes an error once every signing product calls
-# scan-for-key.yml (the exit task is in SKILL.md's backlog). CI-only.
+# A missing record is an ERROR: every signing product calls scan-for-key.yml (2026-09-11), and
+# check-family-conventions.sh fails a repo that signs without it, so this should only ever fire on a
+# scan that did not run or did not pass. It warned during the rollout. CI-only.
 set -eu
 [ "$#" -eq 2 ] || { echo "usage: require_key_scan.sh DIST RECORD_DIR" >&2; exit 2; }
 DIST="$1"; RECORD="$2/sparkle-key-scan.txt"
@@ -21,4 +22,5 @@ if [ -s "$RECORD" ]; then
   echo "signing-key scan: $(cat "$RECORD")"
   exit 0
 fi
-echo "::warning::this release is signed (it carries a sparkle:edSignature), but no scan-for-key.yml job scanned this run's logs and release files for the signing key. Add one between the job that signs and publish (see scan-for-key.yml). This warning becomes an error once every signing product has it."
+echo "::error::this release is signed (it carries a sparkle:edSignature), but no scan-for-key.yml job scanned this run's logs and release files for the signing key -- refusing to publish. Add one between the job that signs and publish, under always() (see scan-for-key.yml), or find out why it did not run."
+exit 1
