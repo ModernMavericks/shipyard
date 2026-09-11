@@ -411,6 +411,42 @@ YML
 (cd "$work/k" && git add -A) >/dev/null 2>&1
 (cd "$work/k" && sh "$S" >/dev/null) || { echo "FAIL a signing workflow with a scan job should pass"; exit 1; }
 
+# 13. A pin on a -mavericks.N release must be read with versioning that COMPARES N. Renovate's default
+# coerces the suffix away, so .1 and .4 compare equal and the bot proposes nothing: swift-runtime's
+# swift-toolchain pin sat at 6.3.3-mavericks.1 while .4 shipped, with a manager wired and green.
+MMVER='regex:^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)-mavericks\.(?<build>\d+)$'
+mkrepo "$work/mv"   # swift-runtime's shape: an inline pin in a shared file, default versioning
+printf 'TOOLCHAIN_REF="6.3.3-mavericks.1"\n' > "$work/mv/build.sh"
+printf '%s\n' '{"extends":["github>ModernMavericks/shipyard"],"customManagers":[{"customType":"regex","managerFilePatterns":["/^build\\.sh$/"],"matchStrings":["TOOLCHAIN_REF=\"(?<currentValue>[^\"]+)\""],"depNameTemplate":"ModernMavericks/swift-toolchain","datasourceTemplate":"github-releases"}]}' \
+  > "$work/mv/.github/renovate.json"
+(cd "$work/mv" && git add -A) >/dev/null 2>&1
+if out="$(cd "$work/mv" && sh "$S" 2>&1)"; then echo "FAIL a -mavericks.N pin with default versioning should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'ModernMavericks/swift-toolchain' || { echo "FAIL should name the dep: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'mavericks' || { echo "FAIL should name the -mavericks.N versioning: $out"; exit 1; }
+# ...with the family's versioning regex (container-tools/tailscale tracking golang), it passes
+python3 - "$work/mv/.github/renovate.json" "$MMVER" <<'PY'
+import json, sys
+p = sys.argv[1]; c = json.load(open(p))
+c["customManagers"][0]["versioningTemplate"] = sys.argv[2]
+json.dump(c, open(p, "w"))
+PY
+(cd "$work/mv" && git add -A) >/dev/null 2>&1
+(cd "$work/mv" && sh "$S" >/dev/null) || { echo "FAIL a -mavericks.N pin with the family versioning should pass"; exit 1; }
+# ...but a regex that matches the version without capturing N is the same bug, spelled differently
+mkrepo "$work/mv2"
+printf '6.3.3-mavericks.1\n' > "$work/mv2/components-version"
+printf '%s\n' '{"extends":["github>ModernMavericks/shipyard"],"customManagers":[{"customType":"regex","managerFilePatterns":["/^components-version$/"],"matchStrings":["^(?<currentValue>.+?)\\s*$"],"depNameTemplate":"x","datasourceTemplate":"github-releases","versioningTemplate":"regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)"}]}' \
+  > "$work/mv2/.github/renovate.json"
+(cd "$work/mv2" && git add -A) >/dev/null 2>&1
+if (cd "$work/mv2" && sh "$S" >/dev/null 2>&1); then echo "FAIL versioning that ignores N should fail"; exit 1; fi
+# ...and a pin that is NOT a -mavericks.N release needs nothing (openssh's own upstream, tag form)
+mkrepo "$work/mv3"
+printf 'V_9_9_P2\n' > "$work/mv3/components-version"
+printf '%s\n' '{"extends":["github>ModernMavericks/shipyard"],"customManagers":[{"customType":"regex","managerFilePatterns":["/^components-version$/"],"matchStrings":["^(?<currentValue>V_[0-9_P]+)\\s*$"],"depNameTemplate":"openssh/openssh-portable","datasourceTemplate":"github-tags"}]}' \
+  > "$work/mv3/.github/renovate.json"
+(cd "$work/mv3" && git add -A) >/dev/null 2>&1
+(cd "$work/mv3" && sh "$S" >/dev/null) || { echo "FAIL a non-mavericks pin should pass"; exit 1; }
+
 # A failing run must NOT also print "ok". The success line used to sit mid-script, so checks appended
 # after it (7, 8, 9) printed "check-family-conventions: ok" and THEN failed -- the exact "output says
 # it passed while it did not" shape these gates exist to prevent.

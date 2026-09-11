@@ -316,6 +316,14 @@ never merges.
   `golang-version`, `git-refs`/`currentDigest` for a raw commit, etc.
 - Track the pin in a dedicated bare file (`UPSTREAM_VERSION` = `1.4.2`) matched whole-file, **or** an
   inline value carrying a marker comment (`… # mavericks-legacysupport`) when it lives in a shared file.
+- **A pin on a sibling's `-mavericks.N` release needs versioning that compares N:**
+  `"versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"`.
+  Renovate's default versioning coerces the suffix away, so `.1` and `.4` compare **equal** and the bot
+  proposes nothing — no PR, no error, and the Dashboard still lists the dep as tracked. swift-runtime's
+  swift-toolchain pin sat at `6.3.3-mavericks.1` through `.2`, `.3` and `.4` this way, *after* its
+  manager was wired. The shared preset's legacysupport manager and the golang consumers
+  (container-tools, tailscale) already do this; `check-family-conventions.sh` fails a manager whose
+  captured pin ends in `-mavericks.N` without it.
 
 **This customManager is the release trigger** — it's how the package auto-updates when upstream does:
 Renovate bumps the pin → the green-gated build merges → the workflow cuts the release. Author it to fit how
@@ -960,6 +968,7 @@ none of which anything detected. A convention that is not checked is a conventio
 | A **committed** `build/` or `scripts/upstream-release-notes-url.sh`, or an `INGREDIENTS.md` line `No upstream release notes: <reason>` | A `-mavericks.1` exists to ship someone else's changes; notes that name the version without linking what changed leave the reader to go find it |
 | A workflow that runs `sign_and_appcast.sh` has some workflow calling `scan-for-key.yml` | A signing run's logs are public and GitHub masks only the literal secret; `publish-release.yml` refuses a signed release with no scan record, and this catches the missing job on a PR instead |
 | If `lines/` exists, every `lines/<id>/UPSTREAM_VERSION` has its OWN **capped** Renovate manager | An uncapped line walks onto the next major it was never built for; an unmanaged line goes stale silently; one manager spanning lines cannot cap each |
+| A Renovate manager whose captured pin ends in `-mavericks.N` has a `regex:` versioning that captures N | Default versioning coerces `-mavericks.N` away, so every repackage compares equal and the pin never moves — silently, with the dep listed as tracked. swift-runtime missed three swift-toolchain releases this way |
 
 Wire it with the reusable workflow — three lines, and it never changes when a check is added:
 

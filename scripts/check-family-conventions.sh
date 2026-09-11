@@ -410,6 +410,63 @@ if ci_mentions 'sign_and_appcast'; then
             "add a scan job between the signing job and publish, under always() (the snippet is at the top of shipyard's scan-for-key.yml), and make publish need it"
 fi
 
+# 13. A pin on a -mavericks.N release must be read with versioning that COMPARES N. Renovate's default
+# versioning coerces the suffix away, so 6.3.3-mavericks.1 and .4 compare EQUAL and the bot proposes
+# nothing -- no PR, no error, the dependency looks tracked on the Dashboard. swift-runtime's
+# swift-toolchain pin stayed at .1 through .2, .3 and .4 -- six weeks after check 9's lesson wired its
+# manager on 2026-07-31, which fixed "nothing tracks it" and left "nothing can see a new one".
+# The shared preset's legacysupport manager and the golang consumers (container-tools, tailscale) do it
+# right; this asks every other manager to match.
+#
+# Decided from the PIN, not the dep's name: run each regex manager over the files it names and look at
+# what it captures. A repo tracking a self-upstream sibling (YYYYMMDD.N, vX.Y.Z) or anything else
+# without the suffix is left alone, and a pin captured via a named group is still seen. The versioning
+# is checked by what it DOES (match the pin, capture N in a compared group), not by how it is spelled.
+if [ -f .github/renovate.json ] && git rev-parse --git-dir >/dev/null 2>&1; then
+  python3 - .github/renovate.json <<'PY' || status=1
+import fnmatch, json, re, subprocess, sys
+def js(rx):  # Renovate regexes are JS: (?<name>...) is Python's (?P<name>...); lookbehinds stay as they are
+    return re.sub(r'\(\?<(?![=!])', '(?P<', rx)
+def matcher(pat):
+    m = re.fullmatch(r'/(.*)/([a-z]*)', pat)
+    if m:
+        rx = re.compile(js(m.group(1)), re.I if 'i' in m.group(2) else 0)
+        return lambda f: rx.search(f) is not None
+    return lambda f: fnmatch.fnmatch(f, pat)
+# What Renovate sees is what is committed (the heredoc is this script's stdin, so git is asked here)
+files = [f for f in subprocess.run(['git', 'ls-files', '-z'], capture_output=True, text=True,
+                                   check=True).stdout.split('\0') if f]
+compared = {'major', 'minor', 'patch', 'build', 'revision'}  # 'prerelease' marks a version unstable
+bad = []
+for mgr in json.load(open(sys.argv[1])).get('customManagers', []):
+    if mgr.get('customType') != 'regex':
+        continue
+    pats = [matcher(p) for p in mgr.get('managerFilePatterns', [])]
+    vt = mgr.get('versioningTemplate') or ''
+    for f in (f for f in files if any(p(f) for p in pats)):
+        try:
+            text = open(f, encoding='utf-8', errors='replace').read()
+        except OSError:
+            continue
+        for ms in mgr.get('matchStrings', []):
+            for m in re.finditer(js(ms), text, re.M):
+                cv = (m.groupdict().get('currentValue') or '').strip()
+                n = re.search(r'-mavericks\.(\d+)$', cv)
+                if not n:
+                    continue
+                vm = re.match(js(vt[len('regex:'):]), cv) if vt.startswith('regex:') else None
+                if vm and any(k in compared and v == n.group(1) for k, v in vm.groupdict().items()):
+                    continue
+                dep = mgr.get('depNameTemplate') or (m.groupdict().get('depName')) or mgr.get('packageNameTemplate') or '(unnamed)'
+                bad.append('%s = %s (%s)' % (dep, cv, f))
+if bad:
+    for b in bad:
+        print("check-family-conventions: Renovate cannot see new -mavericks.N releases of %s -- its versioning does not compare N, so every -mavericks.N of one upstream compares equal" % b, file=sys.stderr)
+    print('    fix: give that manager "versioningTemplate": "regex:^(?<major>\\\\d+)\\\\.(?<minor>\\\\d+)\\\\.(?<patch>\\\\d+)-mavericks\\\\.(?<build>\\\\d+)$"', file=sys.stderr)
+    sys.exit(1)
+PY
+fi
+
 # LAST, after every check: this line used to sit mid-script, so checks appended below it printed
 # "ok" and then failed in the same run.
 [ "$status" -eq 0 ] && echo "check-family-conventions: ok"
