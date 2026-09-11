@@ -8,6 +8,7 @@
 # `arm64` and passed a postinstall that loaded the x86_64 agent on every box. So this RUNS the
 # postinstall the way Installer does ($1 pkg, $2 install location, $3 target volume) against a fixture
 # volume holding both slices, with sysctl/uname/stat/sudo stubbed, and checks what it actually did.
+# The preinstall gets the same treatment against its own fixture volume.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
@@ -156,5 +157,45 @@ host_arch="$(grep -v '^[[:space:]]*#' "$S" | grep -o -- '--host-arch[[:space:]]*
 [ "$host_arch" = "--host-arch x86_64,arm64" ] \
   || fail "package-pkg.sh must pass exactly --host-arch x86_64,arm64 to set_install_floor.sh; got '${host_arch:-nothing}'"
 
+# The preinstall clears the product-owned payload dir, so a file dropped from a newer payload cannot
+# linger: Installer only adds and overwrites, and a removed script that still works on a dev box is a
+# script that fails only in CI. It must remove THAT dir and nothing beside it, and never fail the install.
+sh "$S" --emit-preinstall "$scr/preinstall" || { echo "FAIL: --emit-preinstall failed"; exit 1; }
+[ -s "$scr/preinstall" ] || { echo "FAIL: empty preinstall"; exit 1; }
+lay_down_previous() {  # $1 = volume root: a previous install, plus a neighbour under usr/local
+  rm -rf "$1"
+  mkdir -p "$1/$PAYLOAD/scripts" "$1/usr/local/mavericks-shipyard-other" "$1/usr/local/bin"
+  : > "$1/$PAYLOAD/scripts/renamed-away.sh"
+  : > "$1/usr/local/mavericks-shipyard-other/keep"
+  : > "$1/usr/local/bin/keep"
+}
+for volarg in "$work/pre" "$work/pre/"; do
+  lay_down_previous "$work/pre"
+  rc=0; out="$(sh "$scr/preinstall" /fake/mavericks-shipyard.pkg "$volarg" "$volarg" 2>&1)" || rc=$?
+  [ "$rc" -eq 0 ] || fail "preinstall ($volarg) exited $rc"
+  [ ! -e "$work/pre/$PAYLOAD" ] || fail "preinstall ($volarg) left the previous payload dir; dropped files would linger"
+  [ -f "$work/pre/usr/local/mavericks-shipyard-other/keep" ] || fail "preinstall ($volarg) removed a sibling of the payload dir"
+  [ -f "$work/pre/usr/local/bin/keep" ] || fail "preinstall ($volarg) removed something else under usr/local"
+done
+# A first install (nothing there yet) is fine too.
+rm -rf "$work/pre"; mkdir -p "$work/pre/usr/local"
+rc=0; out="$(sh "$scr/preinstall" /fake/mavericks-shipyard.pkg "$work/pre" "$work/pre" 2>&1)" || rc=$?
+[ "$rc" -eq 0 ] || fail "preinstall on a first install exited $rc"
+# A removal that fails must not fail the install: the payload overwrites what it can either way.
+lay_down_previous "$work/pre"; chmod 555 "$work/pre/usr/local"
+rc=0; out="$(sh "$scr/preinstall" /fake/mavericks-shipyard.pkg "$work/pre" "$work/pre" 2>&1)" || rc=$?
+chmod 755 "$work/pre/usr/local"
+[ "$rc" -eq 0 ] || fail "a failed removal must not fail the install; preinstall exited $rc"
+# No target volume at all is not "/": with nothing to anchor the path, remove nothing. rm is stubbed
+# here so a broken guard records a call instead of touching this machine.
+cat > "$bin/rm" <<'EOF'
+#!/bin/sh
+for a in "$@"; do printf '[%s]' "$a"; done >> "$FAKE_RM_LOG"
+EOF
+chmod +x "$bin/rm"; : > "$work/rm.log"
+rc=0; out="$(PATH="$bin:$PATH" FAKE_RM_LOG="$work/rm.log" sh "$scr/preinstall" 2>&1)" || rc=$?
+/bin/rm -f "$bin/rm"
+[ "$rc" -eq 0 ] || fail "preinstall with no target volume exited $rc"
+[ ! -s "$work/rm.log" ] || fail "preinstall with no target volume removed $(cat "$work/rm.log")"
 
 echo "PASS: shipyard-package-pkg"

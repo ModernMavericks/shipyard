@@ -14,16 +14,17 @@
 # The postinstall is shipyard's own (not stage_updater.sh --scripts-out), because it must also pick an
 # arch and register with cmake. It sources an agent-load fragment rendered by --snippet-out, exactly as
 # mavericks-magic-trackpad2 does for its kext -- one fragment PER SLICE, since each has its label
-# baked in.
+# baked in. A preinstall clears the payload dir first, so files dropped from a newer payload go away.
 #
 # The updater is a stopgap until Mavericks Lineup exists, so beyond its own build option only this
 # script and the release workflow that calls it know about it. Registration logic stays in
 # register-with-cmake.sh, which the postinstall merely calls.
 #   usage: package-pkg.sh --payload DIR --app-native APP --app-cross APP --version V --out PKG
 #          package-pkg.sh --emit-postinstall FILE    (for tests)
+#          package-pkg.sh --emit-preinstall FILE     (for tests)
 set -eu
 SELF="$(cd "$(dirname "$0")" && pwd)"
-PAYLOAD=""; APP_NATIVE=""; APP_CROSS=""; VER=""; OUT=""; EMIT=""
+PAYLOAD=""; APP_NATIVE=""; APP_CROSS=""; VER=""; OUT=""; EMIT=""; EMIT_PRE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --payload) PAYLOAD="$2"; shift 2;;
@@ -32,6 +33,7 @@ while [ $# -gt 0 ]; do
     --version) VER="$2"; shift 2;;
     --out) OUT="$2"; shift 2;;
     --emit-postinstall) EMIT="$2"; shift 2;;
+    --emit-preinstall) EMIT_PRE="$2"; shift 2;;
     *) echo "package-pkg: unknown option $1" >&2; exit 2;;
   esac
 done
@@ -117,7 +119,40 @@ POST
   chmod +x "$1"
 }
 
-if [ -n "$EMIT" ]; then emit_postinstall "$EMIT"; exit 0; fi
+# The preinstall spells out PAYLOAD_DIR literally instead of interpolating it: a destructive path must
+# not be one empty variable away from "$ROOT" alone. The test's fixture uses the same path, so the two
+# cannot drift apart unnoticed.
+emit_preinstall() {  # $1 = destination file
+  cat > "$1" <<'PRE'
+#!/bin/sh
+# Rendered by package-pkg.sh -- do not edit here.
+#
+# Clear the payload dir before Installer lays down the new one. Installer only adds and overwrites; it
+# never deletes a file that a newer payload no longer carries. So a script removed or renamed in
+# shipyard would keep working on every dev box that ever installed it, while CI (which installs from
+# source) fails -- the drift this pkg exists to end. The dir is product-owned (spec decision 2: a
+# self-contained tree, not a shared namespace), so nothing but shipyard lives there; the cost is that
+# anything hand-placed inside it is lost on update.
+#
+# The path is a FIXED constant under the target volume, never built from a variable that could be
+# empty, so this cannot remove anything but that one dir. With no target volume at all ($3 unset,
+# which Installer never does) it removes nothing rather than assume "/".
+#
+# Never fails the install: whatever this cannot remove, the payload still overwrites.
+[ -n "${3:-}" ] || { echo "mavericks-shipyard: preinstall got no target volume; removing nothing" >&2; exit 0; }
+ROOT="${3%/}"
+rm -rf "$ROOT/usr/local/mavericks-shipyard" \
+  || echo "mavericks-shipyard: could not clear $ROOT/usr/local/mavericks-shipyard; files dropped from this version may linger" >&2
+exit 0
+PRE
+  chmod +x "$1"
+}
+
+if [ -n "$EMIT" ] || [ -n "$EMIT_PRE" ]; then
+  [ -z "$EMIT" ] || emit_postinstall "$EMIT"
+  [ -z "$EMIT_PRE" ] || emit_preinstall "$EMIT_PRE"
+  exit 0
+fi
 
 : "${PAYLOAD:?package-pkg: --payload required}"
 : "${APP_NATIVE:?package-pkg: --app-native required}"
@@ -153,6 +188,7 @@ sh "$SELF/stage_updater.sh" --stage "$STAGE" --app "$APP_NATIVE" --app-dir "$APP
 sh "$SELF/stage_updater.sh" --stage "$STAGE" --app "$APP_CROSS" --app-dir "$APPDIR" \
   --agent-label "$CROSS_LABEL" --snippet-out "$SCR/agent-load-cross.sh"
 
+emit_preinstall "$SCR/preinstall"
 emit_postinstall "$SCR/postinstall"
 
 # AppleDouble sidecars an NFS/shared stage sprays would otherwise ship as payload.
