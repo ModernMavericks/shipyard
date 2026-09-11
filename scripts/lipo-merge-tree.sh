@@ -29,8 +29,14 @@ trap 'rm -rf "$work" "$OUT"' EXIT
 
 is_macho() { lipo -info "$1" >/dev/null 2>&1; }
 allowed() { printf '%s\n' "$ALLOW" | grep -Fqx -- "$1"; }
-# Match exact architecture token, not substrings: arm64 must not match arm64e, x86_64 must not match x86_64h.
-has_arch() { lipo -info "$1" | grep -qw -- "$2"; }
+# Match exact architecture token in the architecture list only, not in the file path.
+# lipo -info includes the path: "Non-fat file: path/to/bin/tool is architecture: x86_64" or
+# "Architectures in the fat file: path/to/bin/tool are: i386 x86_64". Extract only the
+# arch list (after the last ": ") and match with exact tokens (space-delimited).
+has_arch() {
+  archs="$(lipo -info "$1" 2>/dev/null | sed 's/.*: //')"
+  case " $archs " in *" $2 "*) return 0;; esac; return 1
+}
 
 # Every path must exist in both trees.
 ( cd "$A" && find . \( -type f -o -type l \) | sort ) > "$work/lmt-a"

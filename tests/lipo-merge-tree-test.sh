@@ -74,6 +74,18 @@ if [ -f "$w/m-x86_64h" ]; then
   [ ! -d "$w/o8" ] || { echo "FAIL: failed arch validation must not leave OUT dir"; exit 1; }
 fi
 
+# Path name must not be confused with architecture list: a file under a directory named
+# x86_64h with architecture i386+x86_64 must NOT satisfy --require-archs "i386 x86_64h".
+mkdir -p "$w/x86_64h-dir"
+lipo -create "$w/m-i386" "$w/m-x86_64" -output "$w/x86_64h-dir/fat-binary"
+mkdir -p "$w/m-path-a/x86_64h-dir" "$w/m-path-b/x86_64h-dir"
+cp "$w/x86_64h-dir/fat-binary" "$w/m-path-a/x86_64h-dir/bin"
+cp "$w/x86_64h-dir/fat-binary" "$w/m-path-b/x86_64h-dir/bin"
+if sh "$S" --a "$w/m-path-a" --b "$w/m-path-b" --out "$w/o9" --require-archs "i386 x86_64h" >/dev/null 2>&1; then
+  echo "FAIL: x86_64h in path must not satisfy --require-archs for x86_64h architecture"; exit 1
+fi
+[ ! -d "$w/o9" ] || { echo "FAIL: failed arch validation must not leave OUT dir"; exit 1; }
+
 # A file in only one tree is refused.
 mk "$w/i" "$w/m-x86_64"; mk "$w/j" "$w/m-i386"; echo extra > "$w/i/share/x/only-in-a"
 if sh "$S" --a "$w/i" --b "$w/j" --out "$w/o7" >/dev/null 2>&1; then
