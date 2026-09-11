@@ -50,7 +50,8 @@ jobs:
           DISPATCH_FIELD: ${{ inputs.dispatch-field }}
         run: |
           set -eu
-          SCR="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* | head -1)/scripts"
+          SCR="$SHIPYARD_SCRIPTS"
+          [ -d "$SCR" ] || { echo "::error::SHIPYARD_SCRIPTS unset -- this workflow needs install@v1 first"; exit 1; }
           before="$BEFORE"; case "$before" in ''|0000000000000000000000000000000000000000) before="HEAD~1";; esac
           CHANGED="$(git diff --name-only "$before" HEAD)"; export CHANGED
           # The RESOLVED rev, not the raw event field: a path:KEY entry needs to read the file as it
