@@ -1061,9 +1061,9 @@ it here.** A silently dropped increment is how the family drifted in the first p
       ed25519 20221003-mavericks.4 had shipped `-f`; shipyard v1.0.151 signed through that path.
       The *release* dropping `-s` is the next ed25519 release after 3efe029
 - [ ] **Every signing product calls `scan-for-key.yml`** — done 2026-09-11 for openssh, tailscale,
-      legacysupport, swift-runtime, porthole, golang, container-tools, clang and shipyard; left:
-      magic-trackpad2 (CI broken since the shipyard rename; moving into the org) and compat (not yet
-      on GitHub). Exit condition: all of them have the job; then `require_key_scan.sh` turns its warning
+      legacysupport, swift-runtime, porthole, golang, container-tools, clang, shipyard and
+      magic-trackpad2 (its CI repaired and back on shipyard, v0.5.3); left: compat (not yet on
+      GitHub). Exit condition: all of them have the job; then `require_key_scan.sh` turns its warning
       into an error (flip `tests/require_key_scan.bats` with it), and `check-family-conventions.sh`
       fails a `release.yml` that runs `sign_and_appcast.sh` without calling `scan-for-key.yml`.
       Transitional since 2026-09-10
