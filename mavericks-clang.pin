@@ -1,0 +1,3 @@
+# The family toolchain that compiles shipyard-cmake's x86_64/10.9 half; Renovate-tracked in Task 9;
+# verified against that release's SHA256SUMS.
+MAVERICKS_CLANG_VERSION=22.1.1-mavericks.1

@@ -61,3 +61,23 @@ jobs:
 
       - name: Standalone test suites
         run: sh scripts/run-repo-tests.sh
+
+  # Builds (or restores) the universal shipyard-cmake and publishes it as a run artifact, so it can be
+  # run on a real 10.9 box -- the only proof the x86_64 slice actually works there.
+  shipyard-cmake:
+    runs-on: macos-26
+    timeout-minutes: 90     # a cache miss builds CMake twice
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0      # blanket repo convention (shipyard-workflow-coupling-test.sh): every
+                              # checkout in ci.yml/release.yml must be full-depth, so shipyard-version.sh
+                              # never meets a shallow clone no matter which job runs it later.
+      - id: cm
+        uses: ./.github/actions/shipyard-cmake
+      - name: Pack the tree
+        run: tar -czf "$RUNNER_TEMP/shipyard-cmake-tree.tar.gz" -C "${{ steps.cm.outputs.tree }}" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shipyard-cmake-tree
+          path: ${{ runner.temp }}/shipyard-cmake-tree.tar.gz
