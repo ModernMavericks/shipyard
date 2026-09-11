@@ -30,6 +30,20 @@ The family has an older/simpler variant and a current/mature variant. **Start fr
 - Install via its **action**: `uses: ModernMavericks/shipyard/.github/actions/install@v1`. It
   self-registers in the CMake user package registry; consume it downstream with `find_package` — **no
   `CMAKE_PREFIX_PATH`, no vendored copy, no hand-run `cmake --install`.**
+
+  **Installing shipyard: the pkg, not `cmake --install`.** Download the `.pkg` from the latest release
+  (`gh release download -R ModernMavericks/shipyard --pattern '*.pkg'`) and install it. It puts the
+  payload in `/usr/local/mavericks-shipyard`, registers that location with whatever cmake is on your
+  `PATH`, and installs a Sparkle updater that keeps it current — so an install can never quietly become
+  a month old, which is exactly what happened before this existed.
+
+  `cmake --install` is now for **developing shipyard itself**, not for consuming it. CI is unaffected:
+  `install@v1` still builds from source and stamps the version it installs.
+
+  If you install shipyard on a box with no cmake, the shell scripts still work and the CMake side is
+  skipped with a message. Install a cmake — any cmake — then run
+  `sh /usr/local/mavericks-shipyard/scripts/register-with-cmake.sh /usr/local/mavericks-shipyard`, or
+  just wait for the next Sparkle update, which runs the same step.
 - `@v1` is the **moving major tag**; Renovate's native github-actions manager tracks it — **no custom
   manager, no SHA pin, no marker comment** for it. It moves **automatically**: shipyard's `release.yml`
   runs on every push to `main`, derives the version from the committed line in `UPSTREAM_VERSION` plus
