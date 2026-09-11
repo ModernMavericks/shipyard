@@ -1085,4 +1085,9 @@ it here.** A silently dropped increment is how the family drifted in the first p
 - Adding a PR trigger without the `rel=no unless main` guard → a PR build tries to publish.
 - Committing `VERSION`, or building assuming it exists → it's gitignored/workflow-written.
 - Reaching for a PAT to create the release tag → `gh release create` mints it under `GITHUB_TOKEN`.
+- Pushing a workflow change to a product while one of its release runs is in flight → that run's
+  publish fails `403 Resource not accessible by integration` creating the release. `GITHUB_TOKEN`
+  may not create a tag on a commit whose `.github/workflows/` differ from the default branch's, and
+  your push just made them differ. Nothing is published and no tag is left; re-dispatch from the new
+  `main`. (openssh 9.9p2-mavericks.4, 2026-09-11: re-running the failed job fails the same way.)
 - Vendoring shipyard or pinning its action to a SHA → consume `@v1` via the install action.
