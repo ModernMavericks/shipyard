@@ -1,0 +1,5 @@
+# The CMake shipyard builds and ships as shipyard-cmake (spec 2026-09-11 decision 3).
+# Renovate bumps CMAKE_VERSION (github-releases Kitware/CMake). No checksum lives here: build-cmake.sh
+# verifies the tarball against Kitware's own published cmake-<v>-SHA-256.txt, which vouches for bytes
+# nobody here has seen yet -- a pinned hash would block the bot (conventions check 9).
+CMAKE_VERSION=4.4.3
