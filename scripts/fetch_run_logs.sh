@@ -4,7 +4,9 @@
 #   fetch_run_logs.sh REPO RUN_ID DIR      ->  DIR/job-<id>.log ...
 #
 # Finished only: the job running this is still writing its own log, and it never touches the key.
-# Needs gh with a token that can read the run's logs -- `actions: read`, which a public repo's logs
+# Not skipped: GitHub calls a skipped job "completed", but it never ran, so it has no log (fetching it
+# 404s) and cannot have printed anything. A publishing run that fails before signing skips the rest,
+# and the always() scan then died on those -- a second red job hiding the real one. Needs gh with a token that can read the run's logs -- `actions: read`, which a public repo's logs
 # still require (anonymous requests get 403). A run with no finished job is an error: nothing to scan
 # is not a pass. CI-only.
 set -eu
@@ -13,7 +15,7 @@ REPO="$1"; RUN="$2"; DIR="$3"
 mkdir -p "$DIR"
 
 ids="$(gh api "repos/$REPO/actions/runs/$RUN/jobs" --paginate \
-         --jq '.jobs[] | select(.status == "completed") | .id')" \
+         --jq '.jobs[] | select(.status == "completed" and .conclusion != "skipped") | .id')" \
   || { echo "fetch_run_logs: cannot list the jobs of $REPO run $RUN" >&2; exit 1; }
 [ -n "$ids" ] || { echo "fetch_run_logs: run $RUN has no finished job -- nothing to scan is not a pass" >&2; exit 1; }
 

@@ -2,9 +2,11 @@ bats_require_minimum_version 1.5.0
 
 # fetch_run_logs.sh REPO RUN_ID DIR: every FINISHED job's log in this run, one file each, for
 # scan-for-key.yml to scan. A stand-in `gh` on PATH plays the GitHub API: it answers the jobs listing
-# from $T/jobs.txt ("<id> <status>" per line) and each log from $T/logs/<id>. Like the real gh, it
-# refuses to print a response carrying terminal escape sequences -- which every colored build log
-# does -- unless given --allow-escape-sequences: openssh's first scan died exactly there.
+# from $T/jobs.txt ("<id> <status> [<conclusion>]" per line; a completed job defaults to success) as
+# the real JSON shape, run through the script's own --jq filter by real jq -- so the filter itself is
+# under test, not a copy of it -- and each log from $T/logs/<id>. Like the real gh, it refuses to
+# print a response carrying terminal escape sequences -- which every colored build log does -- unless
+# given --allow-escape-sequences: openssh's first scan died exactly there.
 setup() {
   ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   T="$BATS_TEST_TMPDIR"
@@ -15,7 +17,11 @@ printf '%s\n' "\$*" >> "$T/gh-calls"
 case "\$2" in
   repos/acme/widget/actions/runs/42/jobs)
     [ -f "$T/jobs.txt" ] || exit 1
-    awk '\$2 == "completed" { print \$1 }' "$T/jobs.txt" ;;
+    q=; prev=; for a in "\$@"; do [ "\$prev" = --jq ] && q="\$a"; prev="\$a"; done
+    awk 'BEGIN { printf "{\"jobs\":[" }
+         { c = \$3 != "" ? "\"" \$3 "\"" : (\$2 == "completed" ? "\"success\"" : "null")
+           printf "%s{\"id\":%s,\"status\":\"%s\",\"conclusion\":%s}", (NR > 1 ? "," : ""), \$1, \$2, c }
+         END { print "]}" }' "$T/jobs.txt" | jq -r "\$q" ;;
   repos/acme/widget/actions/jobs/*/logs)
     id="\${2#repos/acme/widget/actions/jobs/}"; id="\${id%/logs}"
     [ -f "$T/logs/\$id" ] || { echo "HTTP 404: Not Found" >&2; exit 1; }
@@ -44,6 +50,18 @@ fetch() { sh "$ROOT/scripts/fetch_run_logs.sh" acme/widget 42 "$T/out"; }
   [ "$(cat "$T/out/job-101.log")" = 'build log' ]
   [ "$(cat "$T/out/job-102.log")" = 'iso log' ]
   [ ! -e "$T/out/job-103.log" ]
+}
+
+@test "a skipped job is not fetched: it never ran, so it has no log (GitHub 404s it) and no key" {
+  # container-tools: build-iso failed, so package was skipped -- and the scan, which runs always(),
+  # died fetching package's log, turning one real failure into two red jobs.
+  printf '101 completed success\n102 completed skipped\n103 completed failure\n' > "$T/jobs.txt"
+  echo 'build log' > "$T/logs/101"; echo 'failed build log' > "$T/logs/103"   # no $T/logs/102
+  run --separate-stderr fetch
+  [ "$status" -eq 0 ]
+  [ -e "$T/out/job-101.log" ]
+  [ -e "$T/out/job-103.log" ]
+  [ ! -e "$T/out/job-102.log" ]
 }
 
 @test "a colored build log (terminal escape sequences) is fetched whole" {
