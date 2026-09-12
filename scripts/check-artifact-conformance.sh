@@ -15,6 +15,8 @@
 #   pkg        <file> <version> <floor> <identifier>      one per shipped .pkg
 #   appcast    <file> <version> <enclosure> <length>      one per Sparkle appcast
 #   asset      <file> <bytes>                             one per file that will be published
+#   notes-render <notes-file> <sha256>                     digest of gen_appcast.sh --render-notes
+#   appcast-notes <appcast-file> [<sha256>]                digest of the appcast's <description> CDATA
 #   deviation  <check> <reason...>                        a declared, reasoned departure
 #
 # Facts rather than files so the agreement logic is testable without fabricating real .pkg files;
@@ -117,6 +119,26 @@ while read -r kind file url; do
     *) fail enclosure-url "$file points outside this release: $url" "$file" ;;
   esac
 done < "$facts"
+
+# --- ITSELF: the Sparkle <description> and the GitHub Release body are the same notes rendered once -
+# They are built from the same dist/RELEASE_NOTES.md today, which is what makes this assertion cheap --
+# and what makes it worth having, because nothing else would notice the day that stops being true. A
+# 10.9 user deciding whether to take an update reads the appcast; a maintainer reads the Release page.
+# An appcast fact with no notes-render to compare against is left alone: a repo that does not stage a
+# notes file into dist/ is caught by release-assets.sh at publish time, not here.
+render="$(sed -n 's/^notes-render [^ ]* \(..*\)$/\1/p' "$facts" | head -1)"
+if [ -n "$render" ]; then
+  while read -r _ file digest; do
+    [ -n "$file" ] || continue
+    if [ -z "$digest" ]; then
+      fail notes "$file carries no <description>; that is what a 10.9 user reads in the update dialog" "$file"
+    elif [ "$digest" != "$render" ]; then
+      fail notes "$file's <description> is not the release body; Sparkle users and the Release page would read different notes" "$file"
+    fi
+  done <<EOF
+$(grep '^appcast-notes ' "$facts" || true)
+EOF
+fi
 
 # --- SIBLINGS: where a repo ships parallel upstream lines, the line IS the product -----------------
 # go126 and go127 must not share an identifier, or two products claim one install and an updater

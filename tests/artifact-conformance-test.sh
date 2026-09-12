@@ -247,4 +247,65 @@ _afline() {  # <full-version> <line-dir> <upstream-in-dir> -> the emitted `line`
 [ "$(_afline 1.26.5-mavericks.5 126 1.26.5)" = 126 ] \
   || { echo "FAIL: minor-line (golang) should still emit 'line 126'"; exit 1; }
 
+# --- notes: the appcast <description> and the Release body are the same bytes by construction ------
+# Both are built from dist/RELEASE_NOTES.md today, which is exactly why the assertion is cheap and why
+# a future change that breaks the coupling should be loud: a 10.9 user reading the update dialog must
+# not be told a different story than the Release page.
+ok "notes: agreement passes" 'expected 9.9p2-mavericks.6
+notes-render RELEASE_NOTES.md aaaa1111
+appcast-notes appcast.xml aaaa1111'
+
+no "notes: disagreement fails" "notes" 'expected 9.9p2-mavericks.6
+notes-render RELEASE_NOTES.md aaaa1111
+appcast-notes appcast.xml bbbb2222'
+
+# An appcast with no notes digest at all is a rendering that produced nothing -- the description is
+# what a 10.9 user reads in the update dialog, so an empty one is a defect, not an absence to skip.
+no "notes: an appcast with no description fails" "notes" 'expected 9.9p2-mavericks.6
+notes-render RELEASE_NOTES.md aaaa1111
+appcast-notes appcast.xml'
+
+# A product with no appcast at all (a component-only release) has nothing to disagree with.
+ok "notes: no appcast, nothing to compare" 'expected 9.9p2-mavericks.6
+notes-render RELEASE_NOTES.md aaaa1111'
+
+# ...and a declared deviation excuses it, with a reason, like every other check.
+ok "notes: a declared deviation is honoured" 'expected 9.9p2-mavericks.6
+deviation notes the swift.org pkg is republished verbatim with its own notes
+notes-render RELEASE_NOTES.md aaaa1111
+appcast-notes appcast.xml bbbb2222'
+
+# --- artifact-facts: the two digests actually agree for a REAL pair --------------------------------
+# Not a hand-written fixture: a fixture that does not match what the renderer actually emits would let
+# this check pass while proving nothing about the real coupling. Build a real notes file, render a real
+# appcast from it with gen_appcast.sh (the same tool a release uses), then ask artifact-facts.sh for
+# both digests.
+GA="$here/../scripts/gen_appcast.sh"
+_nr="$(mktemp -d "${TMPDIR:-/tmp}/af-notes.XXXXXX")"
+mkdir -p "$_nr/dist"
+cat > "$_nr/dist/RELEASE_NOTES.md" <<'NOTES'
+## Summary
+
+Some bug fixes.
+
+- Fixed a thing
+- Fixed another thing
+
+**Note:** upgrade recommended.
+
+---
+
+Requires 10.9.5 or later.
+NOTES
+sh "$GA" "Test Channel" "9.9p2-mavericks.6" "https://example.com/x.pkg" "10.9.5" \
+  "$_nr/dist/RELEASE_NOTES.md" 'sparkle:edSignature="x" length="10"' > "$_nr/dist/appcast.xml"
+_facts="$(sh "$AF" "$_nr/dist" 9.9p2-mavericks.6 "$_nr")"
+_render_digest="$(printf '%s\n' "$_facts" | sed -n 's/^notes-render [^ ]* \(..*\)$/\1/p')"
+_appcast_digest="$(printf '%s\n' "$_facts" | sed -n 's/^appcast-notes [^ ]* \(..*\)$/\1/p')"
+rm -rf "$_nr"
+[ -n "$_render_digest" ] \
+  || { echo "FAIL: artifact-facts emitted no notes-render fact for a real notes file"; exit 1; }
+[ "$_render_digest" = "$_appcast_digest" ] \
+  || { echo "FAIL: notes-render and appcast-notes digests should agree for a real rendered pair; got '$_render_digest' vs '$_appcast_digest'"; exit 1; }
+
 echo "PASS: artifact-conformance"

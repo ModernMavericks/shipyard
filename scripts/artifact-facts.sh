@@ -82,6 +82,14 @@ for f in "$dist"/*; do
       fi
       rm -rf "$x"
       ;;
+    RELEASE_NOTES.md)
+      # The digest of the RENDERED body, not the markdown: what the appcast carries is the HTML
+      # fragment, and comparing markdown to HTML would need a second renderer that could disagree
+      # with the real one. gen_appcast.sh --render-notes IS the real one (that is what the seam is
+      # for), so the two sides of this comparison cannot drift apart the way two parsers would.
+      printf 'notes-render %s %s\n' "$b" \
+        "$(sh "$(dirname "$0")/gen_appcast.sh" --render-notes "$f" | shasum -a 256 | cut -d' ' -f1)"
+      ;;
     build-info*)
       # What this variant was built FROM (see build-info.sh). One fact per key so the checker can
       # compare a single key across variants without parsing files itself.
@@ -102,6 +110,24 @@ for f in "$dist"/*; do
       # The full URL as its own fact: the basename answers "does this asset exist", the URL answers
       # "does this feed point into THIS release".
       [ -z "$url" ] || printf 'enclosure-url %s %s\n' "$b" "$url"
+      # The <description> CDATA, digested. gen_appcast.sh wraps the rendered notes in a leading blank
+      # line and an injected <style> block (see its heredoc) that --render-notes never emits; strip
+      # both with awk (the content spans lines, so a line-oriented sed can't isolate it) so this
+      # compares the NOTES against notes-render, not gen_appcast's own CDATA wrapping. Emitted with no
+      # digest when the appcast has no description at all -- the checker treats that as a failure,
+      # because the description is what a 10.9 user reads in the update dialog, not something to skip.
+      desc="$(awk '
+        /<!\[CDATA\[/ { inside = 1; sub(/.*<!\[CDATA\[/, ""); }
+        inside {
+          if (match($0, /\]\]>/)) { $0 = substr($0, 1, RSTART - 1); inside = 0 }
+          if ($0 !~ /^[[:space:]]*$/ && $0 !~ /^<style[ >]/) print
+          if (inside == 0) exit
+        }' "$f" | shasum -a 256 | cut -d' ' -f1)"
+      if awk '/<!\[CDATA\[/ { found = 1 } END { exit !found }' "$f"; then
+        printf 'appcast-notes %s %s\n' "$b" "$desc"
+      else
+        printf 'appcast-notes %s\n' "$b"
+      fi
       ;;
   esac
 done
