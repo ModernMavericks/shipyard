@@ -13,10 +13,34 @@ REL=".github/workflows/release.yml"
 # Everything under .github/workflows counts as "CI": some repos run their tests from ci.yml, not
 # release.yml, and either is fine as long as something does.
 CI_FILES="$(ls .github/workflows/*.yml 2>/dev/null || true)"
+# "Mentions" means ON A LINE THAT IS NOT A COMMENT. Prose about a rule is not the rule being obeyed
+# or broken, and this family documents its conventions in the workflows the conventions govern --
+# check 14's own block is sixty lines naming the exact shapes it bans. Unfiltered, BOTH directions
+# are live and both were reproduced against openssh's real main: one appended comment line reading
+# `# never: cp release-notes/README.md dist/RELEASE_NOTES.md` turns a correct repo red, and
+# magic-trackpad2's five comment mentions of release-notes.sh keep the gate printing "ok" after its
+# one real invocation is replaced by `:`. A gate that a maintainer reddens by writing down the rule
+# is the check-7d failure of 2026-09-09 again, and @v1 carries it to twelve repos within minutes.
+#
+# Same test, same spelling, as release-notes.sh's is_caller(): that decided this exact question for
+# this family, and its comment explains the rest of the reasoning. Residual, accepted there and here:
+# a TRAILING inline comment on a line that also carries code still matches, because the line is not a
+# comment line. That is deliberate -- container-tools writes
+# `--out dist/RELEASE_NOTES.md   # becomes the Release body`, and dropping the whole line would drop a
+# real --out. A silent drop on a genuinely-wired repo is the worse of the two errors.
+#
+# The OTHER residual is is_caller()'s, and unchanged here: a NON-comment line that names a thing
+# without doing it still counts. magic-trackpad2 guards with
+# `[ -f "$SHIPYARD_SCRIPTS/release-notes.sh" ] || { echo "::error::..."; exit 1; }`, so blanking its
+# real invocation still leaves check 14's clause 1 satisfied by that guard. It only matters in a repo
+# with no real call at all, and telling the two apart would mean parsing shell rather than reading
+# lines -- which is how the decoy-ranking problem in release-notes.sh got its own answer.
 ci_mentions() {  # $1 = pattern. -e so a pattern starting with '-' (--notes-file) is not read as a flag.
   [ -n "$CI_FILES" ] || return 1
+  # -h: the filter concatenates every workflow into one stream, so filenames must not be prefixed
+  # onto the lines the second grep reads.
   # shellcheck disable=SC2086  # CI_FILES is a deliberate word-split list of paths
-  grep -lq -e "$1" $CI_FILES 2>/dev/null
+  grep -hv '^[[:space:]]*#' $CI_FILES 2>/dev/null | grep -q -e "$1"
 }
 
 status=0
@@ -536,10 +560,15 @@ if [ -n "$CI_FILES" ]; then
   #    --out "$PKG" to cmake/package_pkg.sh, so an unfiltered --out set would also vouch for
   #    --notes-file "$PKG" as "something the generator wrote". Only .md values count.
   strip_arg() {  # $1 = the flag itself, e.g. '--out'; prints each value it is given, unquoted, once
+    # Comment lines dropped first, on ci_mentions' rule and for its reasons: `# do not write
+    # --notes-file release-notes/README.md` is a repo documenting the ban, not violating it, and
+    # unfiltered it failed openssh's real main. Same residual: a trailing inline comment on a line
+    # that also carries code still counts, which is what keeps container-tools' commented --out.
     # -e for the same reason ci_mentions uses it: a pattern starting with '-' is not a grep flag.
     # `[ =]` and not just a space, which also keeps --out-dir and --output out of the --out set.
     # shellcheck disable=SC2086  # CI_FILES is a deliberate word-split list of paths
-    grep -ho -e "$1[ =][\"']\{0,1\}[^ \"']*" $CI_FILES 2>/dev/null \
+    grep -hv '^[[:space:]]*#' $CI_FILES 2>/dev/null \
+      | grep -o -e "$1[ =][\"']\{0,1\}[^ \"']*" \
       | sed "s/^$1[ =][\"']\{0,1\}//" | sort -u
   }
   outs="$(strip_arg '--out' | grep '\.md$' || true)"
@@ -552,6 +581,20 @@ if [ -n "$CI_FILES" ]; then
   # its feed-porthole moving-tag release and golang for each go-line feed; those are feed pointers,
   # not product release bodies, and failing them would redden two correct repos.
   for n in $ins; do
+    # Only LITERAL paths are comparable. A repo that routes one path through a variable
+    # (NOTES=dist/RELEASE_NOTES.md, then --out "$NOTES" and --notes-file "$NOTES") is MORE
+    # self-consistent than one that spells it twice, and is exactly what this check wants -- but the
+    # two sides no longer match as text, so it would be failed while being told "pass the same path
+    # release-notes.sh was given as --out", which it did. A `${{ steps.x.outputs.path }}` expression
+    # is worse still: the value stops at the first space, so the message named the garbage `${{`.
+    # No family repo does this today; this test file's own pre-change baseline did, which is why
+    # mkrepo needed rewriting, so it is plausible rather than exotic.
+    case "$n" in
+      *'$'*|*'{'*) continue ;;
+    esac
+    # -x, not a bare -F: without it a --notes-file that is a strict SUFFIX of a real --out value
+    # (NOTES.md against dist/RELEASE_NOTES.md) matches as a substring, and a genuinely different
+    # file passes.
     printf '%s\n' "$outs" | grep -qxF "$n" \
       || fail "a workflow reads a notes file the generator does not write: --notes-file $n" \
               "pass the same path release-notes.sh was given as --out"

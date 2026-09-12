@@ -560,12 +560,48 @@ cat >> "$work/g7/.github/workflows/release.yml" <<'YML'
       - run: sh cmake/package_pkg.sh --out "$PKG" --version "$VER"
 YML
 (cd "$work/g7" && sh "$S" >/dev/null) || { echo "FAIL a packaging step's --out must not fail the repo"; exit 1; }
+# ...and the .md filter is what stops a packaging --out from vouching for a notes file. Spelled with
+# a LITERAL .pkg: a "$PKG" on the --notes-file side is skipped as unresolvable (see g12 below) and
+# would prove nothing about the filter.
 mkrepo "$work/g7b"
 cat >> "$work/g7b/.github/workflows/release.yml" <<'YML'
-      - run: sh cmake/package_pkg.sh --out "$PKG" --version "$VER"
-      - run: sh "$SHIPYARD_SCRIPTS/gen_appcast.sh" --notes-file "$PKG"
+      - run: sh cmake/package_pkg.sh --out dist/tool.pkg --version "$VER"
+      - run: sh "$SHIPYARD_SCRIPTS/gen_appcast.sh" --notes-file dist/tool.pkg
 YML
-if (cd "$work/g7b" && sh "$S" >/dev/null 2>&1); then echo "FAIL a packaging --out must not vouch for a non-.md notes file"; exit 1; fi
+if out="$(cd "$work/g7b" && sh "$S" 2>&1)"; then echo "FAIL a packaging --out must not vouch for a non-.md notes file"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'dist/tool.pkg' || { echo "FAIL should name the non-.md notes file: $out"; exit 1; }
+
+# The comparison is between WHOLE values. A --notes-file that is a strict SUFFIX of a real --out
+# value is a genuinely different file, and a substring match would wave it through.
+mkrepo "$work/g5c"
+sed 's|--notes-file dist/RELEASE_NOTES\.md|--notes-file NOTES.md|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g5c/.github/workflows/release.yml"
+if out="$(cd "$work/g5c" && sh "$S" 2>&1)"; then echo "FAIL a notes file that is only a SUFFIX of the --out path should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'notes-file NOTES.md' || { echo "FAIL should name the suffix path: $out"; exit 1; }
+
+# A repo that routes ONE path through a variable is more self-consistent than one spelling it twice,
+# and the two sides simply cannot be compared as text. Failing it would tell a correct repo to "pass
+# the same path release-notes.sh was given as --out" -- which it did. Unresolvable values are skipped.
+mkrepo "$work/g12"
+sed -e 's|--out dist/RELEASE_NOTES\.md|--out "$NOTES"|' \
+    -e 's|--notes-file dist/RELEASE_NOTES\.md|--notes-file "$NOTES"|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g12/.github/workflows/release.yml"
+(cd "$work/g12" && sh "$S" >/dev/null) || { echo "FAIL a notes path routed through a variable should pass"; exit 1; }
+
+# ...and a workflow expression the same way. Unskipped, the value stops at the first space and the
+# failure message named the garbage '${{'.
+mkrepo "$work/g12b"
+sed 's|--notes-file dist/RELEASE_NOTES\.md|--notes-file "${{ steps.notes.outputs.path }}"|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g12b/.github/workflows/release.yml"
+(cd "$work/g12b" && sh "$S" >/dev/null) || { echo "FAIL a notes path from a workflow expression should pass"; exit 1; }
+
+# ...but skipping the unresolvable ones must not switch the comparison off: a LITERAL mismatch in the
+# same repo still fails.
+mkrepo "$work/g12c"
+sed 's|--notes-file dist/RELEASE_NOTES\.md|--notes-file "$NOTES" --notes-file release-notes/README.md|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g12c/.github/workflows/release.yml"
+if out="$(cd "$work/g12c" && sh "$S" 2>&1)"; then echo "FAIL a literal mismatch alongside a variable one should still fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'release-notes/README.md' || { echo "FAIL should name the literal mismatch: $out"; exit 1; }
 
 # 1password, ed25519, signal-desktop and swift-toolchain pass no --notes-file at all: they stage no
 # appcast from the notes. The subset loop is then empty, which is correct and not a gap.
@@ -597,6 +633,48 @@ cat >> "$work/g10/.github/workflows/release.yml" <<'YML'
           sh "$SHIPYARD_SCRIPTS/gen_appcast.sh" --notes-file dist/RELEASE_NOTES.md --out-n dist/n.xml
 YML
 (cd "$work/g10" && sh "$S" >/dev/null) || { echo "FAIL two appcasts from one body should pass"; exit 1; }
+
+# Prose about a rule is not the rule being obeyed or broken. This family documents its conventions in
+# the very workflows they govern, so every clause here false-POSITIVES on comments unless comment
+# lines are dropped: appending any ONE of these four to openssh's real main reddened it, and @v1
+# would have carried that to twelve repos within minutes. A maintainer writing the rule down must not
+# be the thing that breaks the rule.
+mkrepo "$work/g13"
+cat >> "$work/g13/.github/workflows/release.yml" <<'YML'
+      - run: |
+          # was: printf "x" > dist/RELEASE_NOTES.md -- never again
+          # never: cp release-notes/README.md dist/RELEASE_NOTES.md
+          # NOT --generate-notes here: it cannot say which ingredient moved
+          # do not write --notes-file release-notes/README.md
+          true
+YML
+(cd "$work/g13" && sh "$S" >/dev/null) || { echo "FAIL comments describing the banned shapes must not fail a correct repo"; exit 1; }
+
+# ...and the other direction, which is the reason to filter in ci_mentions rather than only where a
+# false positive stung: a repo whose ONLY mention of the generator is a comment is not wired up.
+# magic-trackpad2 carries five such comment mentions beside its one real invocation, so an unfiltered
+# clause 1 kept printing "ok" with that invocation replaced by `:`.
+mkrepo "$work/g14"
+sed 's|sh "$SHIPYARD_SCRIPTS/release-notes\.sh" .*|# TODO: rewire sh "$SHIPYARD_SCRIPTS/release-notes.sh" here|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g14/.github/workflows/release.yml"
+if out="$(cd "$work/g14" && sh "$S" 2>&1)"; then echo "FAIL a generator mentioned only in a comment is not wired up"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'no workflow builds the release body' || { echo "FAIL should say the generator is not called: $out"; exit 1; }
+
+# ...and the residual the filter deliberately accepts, which is load-bearing rather than a tolerated
+# wart: container-tools writes `--out dist/RELEASE_NOTES.md   # becomes the Release body`. A line that
+# carries CODE plus a trailing comment is not a comment line, and dropping it would drop a real --out.
+mkrepo "$work/g15"
+sed 's|--out dist/RELEASE_NOTES\.md|--out dist/RELEASE_NOTES.md   # becomes the Release body|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g15/.github/workflows/release.yml"
+(cd "$work/g15" && sh "$S" >/dev/null) || { echo "FAIL a trailing inline comment must not hide a real --out"; exit 1; }
+
+# The comment filter lives in ci_mentions, so checks 2, 5 and 12 get it too -- a comment should not
+# vouch for wiring anywhere. A repo whose only mention of the test runner is a comment has unrun tests.
+mkrepo "$work/g16"
+sed 's|- run: sh "$SHIPYARD_SCRIPTS/run-repo-tests\.sh"|# we should run: sh "$SHIPYARD_SCRIPTS/run-repo-tests.sh"|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g16/.github/workflows/release.yml"
+if out="$(cd "$work/g16" && sh "$S" 2>&1)"; then echo "FAIL a test runner mentioned only in a comment should fail check 2"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'no workflow runs them' || { echo "FAIL should say the tests are not run: $out"; exit 1; }
 
 # A check-14 failure must ACCUMULATE like every other, not abort the run: this gate reports all its
 # failures at once, and a check 14 that killed the script under set -eu would take the "ok" guard and
