@@ -503,4 +503,30 @@ gen "$r" 1.27.0-mavericks.1 --product Go --line 1.27 --min-os 10.9.5 >/dev/null
 grep -q '^## Go 1.27.0 for Mavericks' "$r/OUT.md" \
   || { echo "FAIL linefatal-first: first release of a line still generates"; cat "$r/OUT.md"; exit 1; }
 
+# --- the footer's lines are separate statements and must render as separate paragraphs -------------
+# Markdown joins consecutive lines into ONE <p> (that is correct Markdown), but gen_appcast.sh's
+# renderer is what a 10.9 user's Sparkle dialog actually shows, and release-notes.sh used to emit the
+# floor line and the compare link back-to-back with no blank line between them. Rendered, that is one
+# run-on sentence whose second half is a link:
+#   Requires Mac OS X 10.9.5 or later. All changes since 9.9p2-mavericks.5
+# An assertion on the MARKDOWN would pass whether or not this is fixed -- the markdown was never the
+# problem -- so this asserts on the rendered HTML, via gen_appcast.sh --render-notes, not on OUT.md.
+r="$work/footerpara"; mkrepo "$r"
+( cd "$r" && git tag 9.9p2-mavericks.1 )
+gen "$r" 9.9p2-mavericks.2 >/dev/null
+html="$(sh "$here/../scripts/gen_appcast.sh" --render-notes "$r/OUT.md")"
+printf '%s\n' "$html" | grep -q '<p>Requires Mac OS X 10\.9\.5 or later\.</p>' \
+  || { echo "FAIL footerpara: the install floor must be its own paragraph in the Sparkle dialog"; printf '%s\n' "$html"; exit 1; }
+printf '%s\n' "$html" | grep -q 'or later\..*<a href' \
+  && { echo "FAIL footerpara: the compare link is welded onto the install-floor sentence"; printf '%s\n' "$html"; exit 1; }
+
+# A trailing machine-readable marker (the release-doctrine session appends one before packaging) must
+# also stand alone rather than trailing a sentence a human is reading. release-notes.sh cannot enforce
+# this on an append that happens afterwards in a different repository's script -- it can only get its
+# OWN footer right -- so this simulates that append and checks the marker does not fuse to it either.
+printf 'ModernMavericks-State: v1:sha256:3f786850e387550fdab836ed7e6dc881de23001b\n' >> "$r/OUT.md"
+html="$(sh "$here/../scripts/gen_appcast.sh" --render-notes "$r/OUT.md")"
+printf '%s\n' "$html" | grep -q 'or later\..*sha256' \
+  && { echo "FAIL footerpara: a state marker must not render inside the install-floor sentence"; printf '%s\n' "$html"; exit 1; }
+
 echo "PASS: release-notes"

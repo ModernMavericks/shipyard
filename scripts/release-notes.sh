@@ -278,7 +278,33 @@ if [ -n "$PREV" ]; then
       *) REPO_URL="" ;;
     esac
   fi
-  [ -z "$REPO_URL" ] || printf '[All changes since %s](%s/compare/%s...%s)\n' "$PREV" "$REPO_URL" "$PREV" "$TAG" >> "$footer_tmp"
+  if [ -n "$REPO_URL" ]; then
+    # A blank line, so the renderer makes this its own <p>. gen_appcast.sh's md_to_html joins
+    # consecutive non-blank lines into ONE <p> -- correct Markdown behaviour -- and without this blank
+    # line between the floor line above and this compare link, the Sparkle dialog a 10.9 user actually
+    # reads shows one run-on sentence whose second half is a link:
+    #   Requires Mac OS X 10.9.5 or later. All changes since 9.9p2-mavericks.5
+    # This has shipped in every release since the generator landed. Only emit the separator when
+    # something precedes it in footer_tmp -- the floor line is optional (no --min-os), and a footer
+    # that OPENS with a blank line renders an empty leading <p>.
+    #
+    # ANY future line appended to the footer (or to the body after release-notes.sh hands it off) must
+    # follow the same rule: a blank line before it, not after the line it follows. In particular, the
+    # release-doctrine session's `ModernMavericks-State: v1:sha256:<hex>` marker, appended in a
+    # different repository's script after this one has already run, must be preceded by a blank line
+    # or it fuses onto this footer's last line -- a sentence about which OS you need ending in a raw
+    # 64-character hash. This file cannot enforce that (the append happens downstream, afterwards, in
+    # another repo), so this comment is the only place the requirement is written down.
+    #
+    # `[ -s "$f" ] && cmd` is this codebase's established idiom (safe everywhere else in this file) but
+    # is written as an `if` here rather than changed there: as the LAST command of a script or function
+    # it returns non-zero under `set -e` and aborts the caller when footer_tmp is empty, and this
+    # block's position is exactly the kind of place a later edit could make that true.
+    if [ -s "$footer_tmp" ]; then
+      printf '\n' >> "$footer_tmp"
+    fi
+    printf '[All changes since %s](%s/compare/%s...%s)\n' "$PREV" "$REPO_URL" "$PREV" "$TAG" >> "$footer_tmp"
+  fi
 fi
 
 if [ -s "$footer_tmp" ]; then
