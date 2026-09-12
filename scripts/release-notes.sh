@@ -226,7 +226,6 @@ fi
 # Buffered separately so the '---' rule above it is emitted ONLY when at least one footer line
 # follows: shipyard has neither a --min-os floor nor (in a fixture with no remote) a compare link, and
 # a body ending in a dangling <hr> with nothing after it is not a sentence either.
-: > "$footer_tmp"
 [ -z "$MINOS" ] || printf 'Requires Mac OS X %s or later.\n' "$MINOS" >> "$footer_tmp"
 
 # The compare link is objective "everything else that changed". Its absence is not an error: a first

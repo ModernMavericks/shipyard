@@ -433,8 +433,9 @@ r="$work/nofooter"; mkdir -p "$r/release-notes"
     --product Shipyard --out "$r/OUT.md" ) >/dev/null
 grep -q -- '^---$' "$r/OUT.md" \
   && { echo "FAIL G3: a footer rule with nothing after it was emitted"; cat "$r/OUT.md"; exit 1; }
-tail -1 "$r/OUT.md" | grep -qv -- '^---$' \
-  || { echo "FAIL G3: body ends with a dangling rule"; cat "$r/OUT.md"; exit 1; }
+# the body must still end with real content, not a blank trailer left behind by the buffering
+[ -n "$(tail -1 "$r/OUT.md")" ] \
+  || { echo "FAIL G3: body ends with a blank line"; cat "$r/OUT.md"; exit 1; }
 sh "$here/../scripts/check-release-notes.sh" "$r/OUT.md" 1.0.0 >/dev/null \
   || { echo "FAIL G3: no-footer body should still pass the family shape check"; exit 1; }
 

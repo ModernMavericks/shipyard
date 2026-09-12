@@ -38,8 +38,34 @@ patterns="$(awk '
 ' "$caller")"
 [ -n "$patterns" ] || exit 0
 
-own="$(sed -n 's/^[[:space:]]*own-upstream-paths:[[:space:]]*//p' "$caller" \
-        | sed 's/[[:space:]]*#.*$//' | tr -d '"'"'"'')"
+# own-upstream-paths can be inline ("own-upstream-paths: pins.env:SWIFT_VERSION") OR a YAML block
+# scalar ("own-upstream-paths: |\n  pins.env:SWIFT_VERSION\n  other.txt"). repackage-decision.sh
+# never parses this itself -- GitHub Actions' own YAML engine resolves the `with:` input before that
+# script ever sees it as a plain env var -- so this hand-rolled reader is the only place the block
+# form needs handling, and it must resolve to the SAME token list a real YAML parser would, or a
+# caller written with `|` (unused by any family repo today, but valid YAML) would silently exclude
+# nothing while repackage-decision.sh still skips: two scripts, two answers, from the same file.
+own="$(awk '
+  /^[[:space:]]*own-upstream-paths:[[:space:]]*[|>]/ { inblock = 1; next }
+  /^[[:space:]]*own-upstream-paths:/ {
+    v = $0
+    sub(/^[[:space:]]*own-upstream-paths:[[:space:]]*/, "", v)
+    sub(/[[:space:]]*#.*$/, "", v)
+    print v
+    next
+  }
+  inblock {
+    if ($0 ~ /^[[:space:]]*$/) next
+    if ($0 ~ /^[[:space:]]+/) {
+      v = $0
+      sub(/^[[:space:]]+/, "", v)
+      sub(/[[:space:]]*#.*$/, "", v)
+      print v
+      next
+    }
+    inblock = 0
+  }
+' "$caller" | tr -d '"'"'"'')"
 
 # Expand each pattern against tracked files. GitHub's '**' and sh's '*' both cross directory
 # separators in a case pattern, so '**' collapses to '*'.

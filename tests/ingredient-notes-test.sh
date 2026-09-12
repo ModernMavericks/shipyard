@@ -207,4 +207,111 @@ printf '%s\n' "$out" | grep -qx -- '- \*\*LLVM_SHA\*\*: aaaa -> bbbb' \
   || { echo "FAIL G2: real ingredient key LLVM_SHA in the same file was dropped: $out"; exit 1; }
 cd "$work"; rm -rf "$work4"
 
+# --- G1 review round, CRITICAL 1: a real blob (base64 padding) must not false-positive as KV ------
+# is_kv_pins()'s first cut allowed a lowercase-tolerant key class, which matches base64 PADDING lines
+# in a real vendor/cacert.pem ("dZWAUWpLMKawYqGT8ZvYzsRjdT9ZR7E=", "MrY=", "IhNzbM8m9Yop5w==") as
+# one-line "assignments" -- reported as build ingredients (with the key itself as a bogus "added"
+# value, since oldv is always empty) on the next CA-bundle refresh. The key class must be UPPERCASE
+# ONLY, matching every real family pin (SWIFT_VERSION, MLS_VERSION, REPO, REF, DIGEST, BASE, ...).
+work5="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work5"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+mkdir -p vendor
+cat > vendor/cacert.pem <<'PEM'
+-----BEGIN CERTIFICATE-----
+MIIDdZWAUWpLMKawYqGT8ZvYzsRjdT9ZR7E=
+rJgWVqA=
+IhNzbM8m9Yop5w==
+MrY=
+-----END CERTIFICATE-----
+PEM
+git add -A; git commit -qm base; git tag base
+printf '\n' >> vendor/cacert.pem   # a genuine, tiny change: a real CA-bundle refresh looks like this
+out="$(sh "$S" base vendor/cacert.pem)"
+printf '%s\n' "$out" | grep -q -- '- \*\*vendor/cacert.pem\*\*: updated (' \
+  || { echo "FAIL CRITICAL1: base64 blob no longer treated as opaque: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qi 'MrY\|dZWAUWpL\|IhNzbM8m9Yop5w\|added\b' \
+  && { echo "FAIL CRITICAL1: base64 padding line(s) leaked as a bogus ingredient bullet: $out"; exit 1; }
+cd "$work"; rm -rf "$work5"
+
+# --- G1 review round, CRITICAL 2: components/*/version bullets must always carry the component name
+# container-tools' real shape: SIX components share the same REPO=/REF=/DIGEST=/BASE= key names.
+# Renovate can bump two components in the same release (docker-cli + docker-compose): a bare "REF"/
+# "DIGEST" bullet with no component identity is ambiguous at best and misattributed at worst.
+# Prefix ALWAYS for this pin shape, not only when this run happens to be ambiguous -- an unprefixed
+# bullet that reads fine today silently becomes wrong the day a second component moves.
+work6="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work6"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+mkdir -p components/docker-cli components/docker-compose
+printf 'REPO=https://github.com/docker/cli.git\nREF=v29.8.0\nDIGEST=88096ef00576baf72a9cb45caa45c0544c40e0a7\n' \
+  > components/docker-cli/version
+printf 'REPO=https://github.com/docker/compose.git\nREF=v5.5.1\nDIGEST=5f94fb0aa42a2cd1248c6e6c7fafb87546b9c8de\n' \
+  > components/docker-compose/version
+git add -A; git commit -qm base; git tag base
+printf 'REPO=https://github.com/docker/cli.git\nREF=v29.9.0\nDIGEST=111111111111111111111111111111111111111\n' \
+  > components/docker-cli/version
+printf 'REPO=https://github.com/docker/compose.git\nREF=v2.40.0\nDIGEST=222222222222222222222222222222222222222\n' \
+  > components/docker-compose/version
+out="$(sh "$S" base components/docker-cli/version components/docker-compose/version)"
+printf '%s\n' "$out" | grep -qx -- '- \*\*docker-cli / REF\*\*: v29.8.0 -> v29.9.0' \
+  || { echo "FAIL CRITICAL2: docker-cli REF not prefixed with its component name: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*docker-compose / REF\*\*: v5.5.1 -> v2.40.0' \
+  || { echo "FAIL CRITICAL2: docker-compose REF not prefixed with its component name: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q -- '- \*\*REF\*\*:' \
+  && { echo "FAIL CRITICAL2: an unprefixed, ambiguous REF bullet leaked: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q -- '- \*\*DIGEST\*\*:' \
+  && { echo "FAIL CRITICAL2: an unprefixed, ambiguous DIGEST bullet leaked: $out"; exit 1; }
+cd "$work"; rm -rf "$work6"
+
+# --- G1 review round, ALSO FIX: exclkey uses the LONGEST match, like pins.sh and repackage-decision.sh
+# ${arg#*:} (shortest) would leave the own-upstream KEY itself carrying a stray colon undetected if a
+# path ever had one; ${arg##*:} (longest) is what pins.sh and repackage-decision.sh both use.
+work7="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work7"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+printf 'SWIFT_VERSION="6.3.3"\nLLVM_SHA="aaaa"\n' > pins.env
+git add -A; git commit -qm base; git tag base
+printf 'SWIFT_VERSION="6.3.4"\nLLVM_SHA="bbbb"\n' > pins.env
+out="$(sh "$S" base "pins.env:SWIFT_VERSION")"
+printf '%s\n' "$out" | grep -q 'SWIFT_VERSION' \
+  && { echo "FAIL longest-match exclkey: SWIFT_VERSION leaked: $out"; exit 1; }
+cd "$work"; rm -rf "$work7"
+
+# --- G1 review round, ALSO FIX: a brand-new KV pin file must also honour exclkey -----------------
+# A first-time pins.env (absent at the previous release) used to print a single "added" bullet with
+# the file's first line as its value -- which could BE the own-upstream key's own literal value. A
+# newly-introduced KV file must render per-key, excluding $exclkey, exactly like an existing one.
+work8="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work8"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+git commit -q --allow-empty -m base; git tag base
+printf 'SWIFT_VERSION="6.3.3"\nLLVM_SHA="aaaa"\n' > pins.env
+out="$(sh "$S" base "pins.env:SWIFT_VERSION")"
+printf '%s\n' "$out" | grep -q 'SWIFT_VERSION' \
+  && { echo "FAIL new-file exclkey: SWIFT_VERSION leaked on a brand-new pins.env: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*LLVM_SHA\*\*: added (aaaa)' \
+  || { echo "FAIL new-file exclkey: the real ingredient key LLVM_SHA was dropped: $out"; exit 1; }
+cd "$work"; rm -rf "$work8"
+
+# --- G1 review round: a .sh pin with NO assignment lines at all -- DELIBERATE CHOICE --------------
+# Before content-based dispatch, EVERY .sh file always took the per-key branch regardless of content,
+# so a .sh with zero KEY=VALUE lines produced NO bullet at all when its bytes changed (assignments()
+# extracts nothing from either side, so the diff is empty). Content-based dispatch now falls through
+# such a file to the opaque byte-delta branch instead. DECISION: prefer the byte delta. This whole fix
+# exists because release-notes.sh's own doctrine is "a release that says less than the truth is the
+# defect this removes" (see its header) -- a file explicitly watched as a pin that changed and says
+# NOTHING is the same silent-gap shape, just through dispatch instead of a broken hook. A vague-but-
+# honest "updated (N -> M bytes)" is strictly more truthful than silence.
+work9="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work9"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+printf '#!/bin/sh\necho hello\n' > noop.sh
+git add -A; git commit -qm base; git tag base
+printf '#!/bin/sh\necho hello world\n' > noop.sh
+out="$(sh "$S" base noop.sh)"
+printf '%s\n' "$out" | grep -q -- '- \*\*noop.sh\*\*: updated (' \
+  || { echo "FAIL .sh-no-assignments: expected a byte delta (deliberate choice), got: $out"; exit 1; }
+cd "$work"; rm -rf "$work9"
+
 echo "PASS: ingredient-notes"

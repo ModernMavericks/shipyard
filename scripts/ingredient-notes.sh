@@ -59,8 +59,14 @@ bullet() {  # name old new
 # PKG_VERSION=`cat VERSION`), and rewriting one of those is a code change, not an ingredient change --
 # reporting it would be noise at best and a false claim at worst. A pin is a literal value, so any
 # value carrying a substitution ($, backtick) is dropped.
+#
+# The key is restricted to UPPERCASE (the family's own naming convention for every real pin:
+# SWIFT_VERSION, MLS_VERSION, REPO, REF, DIGEST, BASE, ...), not just "starts with a letter": a
+# lowercase-tolerant class also matches base64 PADDING lines in a real blob like vendor/cacert.pem
+# ("dZWAUWpLMKawYqGT8ZvYzsRjdT9ZR7E=") as a one-character "assignment", which is exactly the kind of
+# blob is_kv_pins() below exists to keep OUT of the per-key branch.
 assignments() {
-  sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}//; s/^\([A-Za-z_][A-Za-z0-9_]*\)=\(.*\)$/\1	\2/p' \
+  sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}//; s/^\([A-Z][A-Z0-9_]*\)=\(.*\)$/\1	\2/p' \
     | sed 's/[[:space:]]*#.*$//; s/["'"'"']//g; s/[[:space:]]*$//' \
     | grep -v '[$`]' || true
 }
@@ -72,13 +78,19 @@ assignments() {
 # an assignment, so detecting the shape needs only ONE such line, not uniformity across the whole
 # file). A genuine blob (a patch, a vendored binary, a single bare version string) has none and falls
 # through to the opaque byte-delta fallback regardless of what it happens to be called.
+#
+# The key class is UPPERCASE ONLY, matching assignments() exactly (see its comment): golang's real
+# vendor/cacert.pem has base64 padding lines ("MrY=", "IhNzbM8m9Yop5w==") that a looser
+# [A-Za-z_][A-Za-z0-9_]* class matches as one-line "assignments", which would report base64
+# fragments as build ingredients on the next CA-bundle refresh -- exactly the false-claim shape
+# this whole fix exists to remove, reintroduced through the sniffer instead of the dispatch.
 is_kv_pins() {
   awk '
     { line = $0
       sub(/^[[:space:]]*#.*/, "", line)
       gsub(/^[[:space:]]+/, "", line); gsub(/[[:space:]]+$/, "", line)
       if (line == "") next
-      if (line ~ /^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=/) found = 1
+      if (line ~ /^(export[[:space:]]+)?[A-Z][A-Z0-9_]*=/) found = 1
     }
     END { exit(found ? 0 : 1) }
   ' "$1"
@@ -88,7 +100,7 @@ for arg in "$@"; do
   # A "path:KEY" argument (ingredient-pins.sh's own-upstream-paths key form) names a file where one
   # KEY is the repo's own upstream, not an ingredient; every OTHER key in the same file still is.
   case "$arg" in
-    *:*) path="${arg%%:*}"; exclkey="${arg#*:}" ;;
+    *:*) path="${arg%%:*}"; exclkey="${arg##*:}" ;;
     *) path="$arg"; exclkey="" ;;
   esac
   if [ ! -f "$path" ]; then
@@ -109,7 +121,20 @@ for arg in "$@"; do
         fi
         ;;
       *)
-        if [ "$newsize" -lt 256 ]; then
+        if is_kv_pins "$path"; then
+          # Per-key, same as an existing file's added keys below -- a brand-new pins.env must not
+          # print $exclkey's (the repo's own upstream) value verbatim just because the whole FILE is
+          # new; every OTHER key in it is still a real, reportable ingredient.
+          case "$path" in
+            components/*/version) label_prefix="$(pin_name "$path") / " ;;
+            *) label_prefix="" ;;
+          esac
+          assignments < "$path" | sort | while IFS= read -r line; do
+            key="${line%%	*}"; newv="${line#*	}"
+            [ "$key" = "$exclkey" ] && continue
+            printf -- '- **%s%s**: added (%s)\n' "$label_prefix" "$key" "$newv" >> "$bullets"
+          done
+        elif [ "$newsize" -lt 256 ]; then
           printf -- '- **%s**: added (%s)\n' "$(pin_name "$path")" "$(head -1 "$path")" >> "$bullets"
         else
           printf -- '- **%s**: added\n' "$(pin_name "$path")" >> "$bullets"
@@ -143,6 +168,16 @@ for arg in "$@"; do
       ;;
     *)
       if is_kv_pins "$path"; then
+        # components/*/version files (container-tools' REPO=/REF=/DIGEST=/BASE= shape) are ONE OF
+        # SEVERAL pin files sharing those same four key names -- unlike versions.sh/pins.env, which
+        # are the repo's one and only pin file. A bare "REF" bullet is unambiguous only until a
+        # SECOND component moves in the same release, so these are prefixed with the component name
+        # ALWAYS, not just when this run happens to be ambiguous (an unprefixed bullet that reads
+        # fine today silently becomes misattributed the day that second component moves).
+        case "$path" in
+          components/*/version) label_prefix="$(pin_name "$path") / " ;;
+          *) label_prefix="" ;;
+        esac
         git show "$prev:$path" | assignments | sort > "$tmp/old"
         assignments < "$path" | sort > "$tmp/new"
         while IFS= read -r line; do
@@ -150,9 +185,9 @@ for arg in "$@"; do
           [ "$key" = "$exclkey" ] && continue
           oldv="$(grep "^$key	" "$tmp/old" | head -1 | cut -f2- || true)"
           if [ -z "$oldv" ]; then
-            printf -- '- **%s**: added (%s)\n' "$key" "$newv" >> "$bullets"
+            printf -- '- **%s%s**: added (%s)\n' "$label_prefix" "$key" "$newv" >> "$bullets"
           elif [ "$oldv" != "$newv" ]; then
-            bullet "$key" "$oldv" "$newv"
+            bullet "${label_prefix}${key}" "$oldv" "$newv"
           fi
         done < "$tmp/new"
         # A key that stopped being pinned is a real change to what this product is built from, and
@@ -161,7 +196,7 @@ for arg in "$@"; do
           key="${line%%	*}"
           [ "$key" = "$exclkey" ] && continue
           grep -q "^$key	" "$tmp/new" \
-            || printf -- '- **%s**: removed\n' "$key" >> "$bullets"
+            || printf -- '- **%s%s**: removed\n' "$label_prefix" "$key" >> "$bullets"
         done < "$tmp/old"
       else
         oldlines="$(git show "$prev:$path" | wc -l | tr -d ' ')"

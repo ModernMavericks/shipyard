@@ -101,4 +101,31 @@ YML
 out="$(sh "$S")"
 [ -z "$out" ] || { echo "FAIL whole-path still own-upstream: got '$out'"; exit 1; }
 
+# --- IMPORTANT 3: own-upstream-paths as a YAML block scalar must parse like the inline form --------
+# repackage-decision.sh never parses this YAML itself -- GitHub Actions' own engine resolves `with:`
+# before that script sees a plain env var -- so this hand-rolled reader is the only place a block
+# scalar ("own-upstream-paths: |") needs handling, and it must resolve to the same tokens a real YAML
+# parser would. Unused by any family repo today (pre-existing, latent), but the brief asked for
+# parsing that genuinely matches, not a lookalike that silently excludes nothing.
+cat > .github/workflows/repackage-on-ingredient-bump.yml <<'YML'
+on:
+  push:
+    branches: [main]
+    paths: ['pins.env', 'other.txt']
+jobs:
+  repackage:
+    uses: ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
+    with:
+      own-upstream-paths: |
+        pins.env:SWIFT_VERSION
+        other.txt
+YML
+printf 'x\n' > other.txt
+git add -A; git commit -qm "add other.txt, block-scalar own-upstream-paths"
+out="$(sh "$S")"
+printf '%s\n' "$out" | grep -qx 'pins.env:SWIFT_VERSION' \
+  || { echo "FAIL block-scalar: pins.env:SWIFT_VERSION not derived, got '$out'"; exit 1; }
+printf '%s\n' "$out" | grep -qx 'other.txt' \
+  && { echo "FAIL block-scalar: other.txt should be excluded whole, got '$out'"; exit 1; }
+
 echo "PASS: ingredient-pins"
