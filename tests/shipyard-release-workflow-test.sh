@@ -177,7 +177,12 @@ def cmds(pred):
             lines = [l for l in (s.get("run") or "").splitlines() if not l.lstrip().startswith("#")]
             out += [" ".join(l.split()) for l in re.sub(r"\\\s*\n\s*", " ", "\n".join(lines)).splitlines() if l.strip()]
     return out
-rel = cmds(lambda c: "'release'" in c)
+# The release path has TWO branches (R-P1-18): macOS installs the pkg, everything else exports
+# shipyard's shell half out of the action's own checkout. They are separate STEPS with separate `if:`
+# expressions, so "the non-macOS branch installs nothing" is a claim this can actually check -- inside
+# one step's shell `if`, both halves would land in the same flat command list and be indistinguishable.
+rel_mac = cmds(lambda c: "'release'" in c and "runner.os == 'macOS'" in c)
+rel_oth = cmds(lambda c: "'release'" in c and "runner.os != 'macOS'" in c)
 bld = cmds(lambda c: "'build'" in c)
 
 def exports(cs, name):
@@ -196,12 +201,38 @@ def exports(cs, name):
                 break
     return False
 
-for pat, why in ((r'resolve-action-version\.sh', "release mode never resolves its ref to a version"),
-                 (r'^gh release download "v\$ver" -R ModernMavericks/shipyard --pattern ', "release mode never downloads the release's pkg"),
-                 (r'^sudo installer -pkg ', "release mode never installs the pkg")):
-    if not any(re.search(pat, c) for c in rel): bad.append(why)
-if not exports(rel, "SHIPYARD_SCRIPTS"):
-    bad.append("release mode never exports SHIPYARD_SCRIPTS")
+for pat, why in ((r'resolve-action-version\.sh', "the macOS release path never resolves its ref to a version"),
+                 (r'^gh release download "v\$ver" -R ModernMavericks/shipyard --pattern ', "the macOS release path never downloads the release's pkg"),
+                 (r'^sudo installer -pkg ', "the macOS release path never installs the pkg")):
+    if not any(re.search(pat, c) for c in rel_mac): bad.append(why)
+if not exports(rel_mac, "SHIPYARD_SCRIPTS"):
+    bad.append("the macOS release path never exports SHIPYARD_SCRIPTS")
+
+# R-P1-18: a non-macOS runner gets shipyard's shell half, pinned to the ref, and nothing installed.
+# repackage-on-ingredient-bump.yml runs on ubuntu-latest and wants exactly that.
+if not rel_oth:
+    bad.append("install@v1 has no non-macOS release path; ubuntu jobs that want only shipyard's "
+               "shell half (repackage-on-ingredient-bump.yml) would fail (R-P1-18)")
+else:
+    if not exports(rel_oth, "SHIPYARD_SCRIPTS"):
+        bad.append("the non-macOS release path never exports SHIPYARD_SCRIPTS")
+    if not any("GITHUB_ACTION_PATH" in c for c in rel_oth):
+        bad.append("the non-macOS release path must take its scripts from the action's OWN checkout "
+                   "($GITHUB_ACTION_PATH/../../..), which is shipyard at the ref the consumer pinned")
+    for pat, why in ((r'^sudo installer', "installs a pkg"),
+                     (r'^gh release download', "downloads a release asset")):
+        if any(re.search(pat, c) for c in rel_oth):
+            bad.append("the non-macOS release path %s; there is no Linux pkg to install" % why)
+
+# Only source: build may refuse a non-macOS runner -- it compiles CMake against an Apple toolchain.
+if not any("exit 1" in c for c in cmds(lambda c: "'build'" in c and "runner.os != 'macOS'" in c)):
+    bad.append("source: build no longer refuses a non-macOS runner, where it cannot build CMake at all")
+# ...and nothing outside source: build may do so, which is the failure R-P1-18 exists to undo.
+for c in cmds(lambda c: "'build'" not in c):
+    if re.search(r'uname -s.*Darwin', c) and "exit 1" in c:
+        bad.append("install@v1 fails on a non-macOS runner outside source: build (%s) -- R-P1-18: the "
+                   "release path must hand those jobs shipyard's shell half instead" % c)
+
 if not exports(bld, "SHIPYARD_SCRIPTS"):
     bad.append("build mode never exports SHIPYARD_SCRIPTS")
 if not exports(bld, "SHIPYARD_CMAKE_TREE"):
@@ -212,12 +243,10 @@ if not any(re.search(r'^echo "\$b" >> "\$GITHUB_PATH"$', c) for c in bld):
 # bin/doc/man/share, and the build-mode prefix has shipyard installed into it.
 if any(re.search(r'SHIPYARD_CMAKE_TREE="?\$p', c) for c in bld):
     bad.append("SHIPYARD_CMAKE_TREE must be the untouched CMake tree, not the prefix shipyard was installed into")
-if any("cmake/packages" in c for c in rel + bld):
+if any("cmake/packages" in c for c in rel_mac + rel_oth + bld):
     bad.append("install@v1 still reads the CMake user package registry")
-if not any(re.search(r'uname -s.*Darwin', c) for c in cmds(lambda c: True)):
-    bad.append("install@v1 no longer fails clearly on a non-macOS runner")
 for b in bad: print("FAIL: " + b)
 if bad: sys.exit(1)
-print("ok: install@v1 installs the released pkg by the ref pinned, and source-builds only for shipyard")
+print("ok: install@v1 installs the released pkg on macOS, hands non-macOS jobs the shell half, and source-builds only for shipyard")
 PY
 echo "PASS: shipyard-release-workflow"

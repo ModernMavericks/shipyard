@@ -19,17 +19,27 @@ runs:
     - shell: bash
       run: |
         set -eu
-        [ "$(uname -s)" = Darwin ] || { echo "::error::shipyard has no Linux build yet; this action needs a macOS runner"; exit 1; }
         # bats BEFORE anything configures: shipyard's CMakeLists registers its shell tests only when
         # bats is present. From the platform package manager (checksummed), not a curl|sh.
         if command -v bats >/dev/null 2>&1; then echo "bats: $(command -v bats)"
         elif command -v brew >/dev/null 2>&1; then brew install bats-core && echo "bats: installed via brew"
+        elif command -v apt-get >/dev/null 2>&1; then sudo apt-get update -qq && sudo apt-get install -y -qq bats && echo "bats: installed via apt"
         else echo "::warning::no bats and no package manager to install it; *.bats tests will be skipped"; fi
+
+    # source: build compiles the universal CMake from source against an Apple toolchain. That is the
+    # ONE thing this action cannot do elsewhere, so it is the only thing that refuses a non-macOS
+    # runner -- and it is shipyard's own workflows, which choose their runner.
+    - if: inputs.source == 'build' && runner.os != 'macOS'
+      shell: bash
+      run: |
+        set -eu
+        echo "::error::source: build needs a macOS runner -- it builds the universal CMake from Kitware's source against an Apple toolchain. Consumers want the default (source: release)."
+        exit 1
 
     # The consumer path. There is no `cmake --install` of a checkout here any more: a consumer gets the
     # pkg, the same artifact a developer double-clicks, so "it works in CI" and "it works on my box"
     # stop being two different installations. The ref IS the version pin.
-    - if: inputs.source == 'release'
+    - if: inputs.source == 'release' && runner.os == 'macOS'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -47,6 +57,27 @@ runs:
         [ -d "$scripts" ] || { echo "::error::the shipyard pkg installed no scripts dir at $scripts"; exit 1; }
         echo "SHIPYARD_SCRIPTS=$scripts" >> "$GITHUB_ENV"
         echo "shipyard $ver installed; SHIPYARD_SCRIPTS=$scripts"
+
+    # R-P1-18. There is no Linux pkg, and the jobs that land here do not want one: they run shipyard's
+    # SHELL half (repackage-decision.sh and friends) on ubuntu-latest, where the whole point is that
+    # the job is cheap. Refusing them would have broken every consumer of
+    # repackage-on-ingredient-bump.yml on the day this action started installing a pkg.
+    #
+    # The scripts come from the action's OWN checkout -- <action_path>/../../.. is shipyard at the ref
+    # the consumer pinned, the same path the macOS branch resolves resolve-action-version.sh from -- so
+    # the shell half is still version-pinned, just not packaged.
+    - if: inputs.source == 'release' && runner.os != 'macOS'
+      shell: bash
+      run: |
+        set -eu
+        root="$(cd "$GITHUB_ACTION_PATH/../../.." && pwd)"
+        scripts="$root/scripts"
+        # Named, not just tested for existence: if the action's layout ever moves, this must say which
+        # path it tried rather than export a plausible-looking directory that holds nothing.
+        [ -f "$scripts/run-repo-tests.sh" ] || {
+          echo "::error::$scripts does not look like shipyard's scripts dir (no run-repo-tests.sh) -- the action's own checkout is not where this expected it"; exit 1; }
+        echo "SHIPYARD_SCRIPTS=$scripts" >> "$GITHUB_ENV"
+        echo "${RUNNER_OS:-this runner} is not macOS and shipyard has no Linux pkg yet, so this installs nothing: SHIPYARD_SCRIPTS=$scripts gives you shipyard's shell half from the ref you pinned. No cmake was installed, so anything needing shipyard-cmake will fail here -- run that on a macOS runner."
 
     # shipyard's own workflows only, and the reason this input exists: shipyard cannot install a
     # released shipyard to test the one it is about to release. `uses:` with a local path inside a
