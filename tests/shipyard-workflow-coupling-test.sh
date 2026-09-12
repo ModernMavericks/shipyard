@@ -98,12 +98,28 @@ for pat, what in ((r"^sh scripts/lipo-merge-tree\.sh ", "merge the two updater b
                   (r"^sh scripts/assert_pkg_installs_in_place\.sh ", "gate the pkg (scripts/assert_pkg_installs_in_place.sh)"),
                   (r"^sudo installer -pkg .* \|\| bad=1$", "install the pkg on the runner, recording failure (sudo installer ... || bad=1)"),
                   (r"^sh scripts/assert-installed-shipyard\.sh .* \|\| bad=1$",
-                   "assert the install, recording failure (scripts/assert-installed-shipyard.sh ... || bad=1)")):
+                   "assert the install, recording failure (scripts/assert-installed-shipyard.sh ... || bad=1)"),
+                  # The merge's own result, asserted rather than assumed: lipo-merge-tree.sh's
+                  # --require-archs covers every Mach-O in the tree, and this says out loud that the
+                  # one binary the whole pkg exists to deliver came out with both slices.
+                  (r'^case " \$archs " in \*" arm64 "\*\) ;; \*\) echo "::error::the merged updater has no arm64 slice',
+                   "assert the merged updater carries an arm64 slice")):
     if not has(rel, pat):
         bad.append("release.yml no longer does: %s" % what)
     elif not has(ci, pat):
         bad.append("ci.yml does not rehearse release.yml's packaging path: it never runs %s, so that "
                    "step's first real execution would be a push that is already publishing" % what)
+
+# R-P1-22: no `codesign --deep`, in either workflow. The updater app carries Sparkle as a VERSIONED
+# framework, and `--verify --deep` of such an app is ambiguous by design -- "bundle format is
+# ambiguous (could be app or framework)" -- so it fails on every runner. `--deep --sign -` is worse
+# than useless here: it replaces Sparkle's own signature with an ad-hoc one, to re-seal a bundle
+# nothing ever sealed. lipo already preserves each slice's signature verbatim.
+for name, cs in (("ci.yml", ci), ("release.yml", rel)):
+    for c in cs:
+        if re.search(r'\bcodesign\b.*--deep', c):
+            bad.append("%s runs codesign --deep (%s); an app containing a versioned framework cannot "
+                       "be verified that way, and there is no bundle seal here to re-create" % (name, c))
 
 # ONE statement of what an installed shipyard must look like. Either workflow asserting it inline is
 # how the two drift apart, and the fixture test then covers neither.

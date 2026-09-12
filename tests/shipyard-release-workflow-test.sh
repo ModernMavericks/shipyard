@@ -92,6 +92,14 @@ need(r'^shipyard-cmake -S \. -B "?\$RUNNER_TEMP/upd-\$1"? .*-DSHIPYARD_BUILD_UPD
 need(r'^shipyard-cmake --build "?\$RUNNER_TEMP/upd-\$1"?$', "the per-arch updater builds are never built")
 need(r"^sh scripts/lipo-merge-tree\.sh .*--allow-differ Contents/Info\.plist --require-archs \"x86_64 arm64\"$",
      "the two updater builds are never merged with lipo-merge-tree.sh (--allow-differ Contents/Info.plist)")
+# ...and the result is asserted, not assumed. The merge is NOT followed by a re-sign: lipo copies each
+# slice byte for byte, so the ad-hoc signature ld gives the arm64 slice -- all Apple Silicon needs to
+# run it -- survives, and nothing in shipyard's build seals this bundle for a re-seal to restore.
+# `codesign --deep` in particular must not come back: the app carries Sparkle as a VERSIONED
+# framework, which `--verify --deep` calls ambiguous on every runner (R-P1-22).
+for arch in ("x86_64", "arm64"):
+    need(r'^case " \$archs " in \*" %s "\*\) ;; \*\) echo "::error::the merged updater has no %s slice' % (arch, arch),
+         "the merged updater's %s slice is never asserted after the merge" % arch)
 
 # The pkg: the CMake tree + shipyard's install prefix + the merged app.
 need(r"^sh scripts/package-pkg\.sh .*--cmake-tree \S+ .*--shipyard-prefix \S+ .*--app \S*/MavericksShipyardUpdater\.app\"?",

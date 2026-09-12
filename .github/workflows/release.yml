@@ -104,10 +104,20 @@ jobs:
             --b "$RUNNER_TEMP/upd-arm64/MavericksShipyardUpdater.app" \
             --out "$RUNNER_TEMP/MavericksShipyardUpdater.app" \
             --allow-differ Contents/Info.plist --require-archs "x86_64 arm64"
-          # The executable changed under any bundle seal; re-seal ad hoc so arm64 accepts it.
-          codesign --force --deep --sign - "$RUNNER_TEMP/MavericksShipyardUpdater.app"
-          codesign --verify --deep "$RUNNER_TEMP/MavericksShipyardUpdater.app"
-          lipo -info "$RUNNER_TEMP/MavericksShipyardUpdater.app/Contents/MacOS/MavericksShipyardUpdater"
+          # NOT re-signed, deliberately (R-P1-22). Nothing in shipyard's build signs this app -- the
+          # only `codesign` in the repo used to be right here -- so the merge breaks no bundle seal.
+          # `lipo -create` copies each slice byte for byte (a slice's LC_CODE_SIGNATURE covers only
+          # its own bytes), so the ad-hoc signature ld puts on the arm64 slice, which is what Apple
+          # Silicon requires to run it at all, survives untouched. Sparkle.framework is byte-identical
+          # in both builds and is copied whole, keeping ITS signature -- which `--deep --sign -` would
+          # have replaced with an ad-hoc one. And `codesign --verify --deep` of an app carrying a
+          # VERSIONED framework is ambiguous by design ("bundle format is ambiguous (could be app or
+          # framework)"), which is how this was found.
+          exe="$RUNNER_TEMP/MavericksShipyardUpdater.app/Contents/MacOS/MavericksShipyardUpdater"
+          archs="$(lipo -info "$exe" | sed -n 's/.*: //p')"
+          case " $archs " in *" x86_64 "*) ;; *) echo "::error::the merged updater has no x86_64 slice: $archs"; exit 1;; esac
+          case " $archs " in *" arm64 "*) ;; *) echo "::error::the merged updater has no arm64 slice: $archs"; exit 1;; esac
+          echo "merged updater: $archs"
 
       - name: Package
         run: |
