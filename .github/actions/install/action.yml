@@ -87,8 +87,20 @@ runs:
         # path it tried rather than export a plausible-looking directory that holds nothing.
         [ -f "$scripts/run-repo-tests.sh" ] || {
           echo "::error::$scripts does not look like shipyard's scripts dir (no run-repo-tests.sh) -- the action's own checkout is not where this expected it"; exit 1; }
-        echo "SHIPYARD_SCRIPTS=$scripts" >> "$GITHUB_ENV"
-        echo "${RUNNER_OS:-this runner} is not macOS and shipyard has no Linux pkg yet, so this installs nothing: SHIPYARD_SCRIPTS=$scripts gives you shipyard's shell half from the ref you pinned. No cmake was installed, so anything needing shipyard-cmake will fail here -- run that on a macOS runner."
+        # find_package(MavericksShipyard) must resolve here too: container-tools' two ubuntu-latest
+        # jobs do exactly that, to reach the scripts. MavericksShipyard_DIR and not CMAKE_PREFIX_PATH
+        # (both work; so does MavericksShipyard_ROOT): it is package-scoped and EXACT -- "this is the
+        # config directory", no search -- so it can neither mis-resolve nor shadow another package the
+        # way putting a whole checkout on CMAKE_PREFIX_PATH could. The checkout root is where
+        # MavericksShipyardConfig.cmake lives in a source tree. The config skips its shipyard-cmake
+        # refusal when the HOST is not Apple, so this resolves rather than being rejected (R-P1-23).
+        [ -f "$root/MavericksShipyardConfig.cmake" ] || {
+          echo "::error::$root holds no MavericksShipyardConfig.cmake -- find_package(MavericksShipyard) would not resolve on this runner"; exit 1; }
+        {
+          echo "SHIPYARD_SCRIPTS=$scripts"
+          echo "MavericksShipyard_DIR=$root"
+        } >> "$GITHUB_ENV"
+        echo "${RUNNER_OS:-this runner} is not macOS and shipyard has no Linux pkg yet, so nothing was installed. You get shipyard's shell half from the ref you pinned: SHIPYARD_SCRIPTS=$scripts, and find_package(MavericksShipyard) resolves via MavericksShipyard_DIR=$root. There is no shipyard-cmake here, so a configure that needs one must run on a macOS runner."
 
     # shipyard's own workflows only, and the reason this input exists: shipyard cannot install a
     # released shipyard to test the one it is about to release.

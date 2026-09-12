@@ -90,8 +90,15 @@ need(r'^shipyard-cmake -S \. -B "?\$RUNNER_TEMP/upd-\$1"? .*-DSHIPYARD_BUILD_UPD
      r'-DCMAKE_OSX_ARCHITECTURES="?\$1"? -DCMAKE_OSX_DEPLOYMENT_TARGET="?\$2"?',
      "no per-arch shipyard-cmake configure of the updater (-DCMAKE_OSX_ARCHITECTURES/-DCMAKE_OSX_DEPLOYMENT_TARGET)")
 need(r'^shipyard-cmake --build "?\$RUNNER_TEMP/upd-\$1"?$', "the per-arch updater builds are never built")
-need(r"^sh scripts/lipo-merge-tree\.sh .*--allow-differ Contents/Info\.plist --require-archs \"x86_64 arm64\"$",
-     "the two updater builds are never merged with lipo-merge-tree.sh (--allow-differ Contents/Info.plist)")
+need(r"^sh scripts/lipo-merge-tree\.sh .*--require-archs \"x86_64 arm64\"$",
+     "the two updater builds are never merged with lipo-merge-tree.sh --require-archs \"x86_64 arm64\"")
+# ...and merged STRICTLY. updater/Info.plist.in fixes LSMinimumSystemVersion at the family's floor
+# instead of deriving it per build, so the two plists are byte-identical and the flag is not needed;
+# passing it anyway would let a real future divergence through silently, which is the opposite of what
+# that file's comment promises. If they ever do differ, fix the plist, not this line.
+if find(r"^sh scripts/lipo-merge-tree\.sh .*--allow-differ"):
+    bad.append("the updater merge passes --allow-differ; nothing in updater/Info.plist.in is "
+               "arch-dependent, so a difference there is a defect to fix, not one to declare")
 # ...and the result is asserted, not assumed. The merge is NOT followed by a re-sign: lipo copies each
 # slice byte for byte, so the ad-hoc signature ld gives the arm64 slice -- all Apple Silicon needs to
 # run it -- survives, and nothing in shipyard's build seals this bundle for a re-seal to restore.
@@ -257,6 +264,14 @@ else:
     if not any("GITHUB_ACTION_PATH" in c for c in rel_oth):
         bad.append("the non-macOS release path must take its scripts from the action's OWN checkout "
                    "($GITHUB_ACTION_PATH/../../..), which is shipyard at the ref the consumer pinned")
+    # R-P1-23: find_package(MavericksShipyard) has to RESOLVE there too -- container-tools' two
+    # ubuntu-latest jobs do exactly that. SHIPYARD_SCRIPTS alone does not make find_package work.
+    if not exports(rel_oth, "MavericksShipyard_DIR"):
+        bad.append("the non-macOS release path never exports MavericksShipyard_DIR, so "
+                   "find_package(MavericksShipyard) cannot resolve on a Linux runner (R-P1-23)")
+    if not any(re.search(r'^\[ -f "\$root/MavericksShipyardConfig\.cmake" \] \|\|', c) for c in rel_oth):
+        bad.append("the non-macOS release path exports MavericksShipyard_DIR without checking the "
+                   "config is actually there; a wrong path would surface as a consumer's find_package failure")
     for pat, why in ((r'^sudo installer', "installs a pkg"),
                      (r'^gh release download', "downloads a release asset")):
         if any(re.search(pat, c) for c in rel_oth):

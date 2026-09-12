@@ -53,4 +53,30 @@ printf '%s' "$out" | grep -q 'shipyard-cmake' || { echo "FAIL: the refusal must 
 out="$(HOME="$w/home-run" CMAKE_PREFIX_PATH="$w/dev" "$fx/bin/cmake" -S "$w/c" -B "$w/b3" 2>&1)" || { echo "FAIL: dev override must configure; got:"; echo "$out"; exit 1; }
 printf '%s' "$out" | grep -q "DIR=$w/dev/share/cmake/MavericksShipyard" || { echo "FAIL: dev override must load the dev copy; got:"; echo "$out"; exit 1; }
 
+# 4. The refusal is keyed on CMAKE_HOST_APPLE, and must NOT fire on a non-Apple host (R-P1-23):
+#    shipyard ships no Linux pkg and no Linux cmake, so demanding shipyard-cmake there is incoherent,
+#    and it broke container-tools' two ubuntu-latest jobs, which find_package shipyard for its scripts.
+#
+#    Driven with `cmake -P`, because this box IS Apple and CMAKE_HOST_APPLE cannot be turned off from
+#    the command line -- CMake sets it as a normal variable, which would shadow any -D. In script mode
+#    a `set()` before the include does reach it, so this exercises the real guard in the real file with
+#    a CMAKE_COMMAND that has no shipyard beside it: exactly the situation on a Linux runner.
+probe() {  # $1 = CMAKE_HOST_APPLE value; prints the config's verdict
+  printf 'set(CMAKE_HOST_APPLE %s)\nset(CMAKE_COMMAND "%s/no-such-prefix/bin/cmake")\ninclude("%s/MavericksShipyardConfig.cmake")\nmessage(STATUS "CONFIGURED")\n' \
+    "$1" "$w" "$root" > "$w/probe-$1.cmake"
+  ( cd "$w" && "$real" -P "$w/probe-$1.cmake" 2>&1 )
+}
+# The guard must still BITE on an Apple host, or case 4 below proves nothing.
+if out="$(probe 1)"; then echo "FAIL: on an Apple host a cmake with no shipyard beside it must be refused; got:"; echo "$out"; exit 1; fi
+printf '%s' "$out" | grep -q 'shipyard-cmake' || { echo "FAIL: the Apple-host refusal must name shipyard-cmake; got:"; echo "$out"; exit 1; }
+out="$(probe 0)" || { echo "FAIL: on a NON-Apple host the config must load anyway (no Linux pkg exists to demand); got:"; echo "$out"; exit 1; }
+printf '%s' "$out" | grep -q 'CONFIGURED' || { echo "FAIL: the non-Apple host did not reach the end of the config; got:"; echo "$out"; exit 1; }
+
+# 5. install@v1's non-macOS path points MavericksShipyard_DIR at the action's own CHECKOUT, where the
+#    config sits at the root rather than under share/cmake. The vendored guard must not misfire on
+#    that: the checkout is outside the consumer's source tree, which is precisely what it allows.
+out="$(HOME="$w/home-run" MavericksShipyard_DIR="$root" "$fx/bin/cmake" -S "$w/c" -B "$w/b4" 2>&1)" \
+  || { echo "FAIL: MavericksShipyard_DIR pointed at a shipyard CHECKOUT must configure (that is what install@v1 exports on Linux); got:"; echo "$out"; exit 1; }
+printf '%s' "$out" | grep -q "DIR=$root" || { echo "FAIL: expected the checkout's config; got:"; echo "$out"; exit 1; }
+
 echo "PASS: shipyard-cmake-refusal"

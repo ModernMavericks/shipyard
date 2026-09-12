@@ -20,14 +20,24 @@
 # variable, so someone determined enough can point it at any prefix that happens to hold a
 # shipyard, same as they could just edit this file -- the check exists to catch the wrong cmake
 # reaching here BY ACCIDENT, which is how the real drift happens, not to stop deliberate abuse.
-get_filename_component(_shipyard_cmake_bin "${CMAKE_COMMAND}" DIRECTORY)
-get_filename_component(_shipyard_cmake_prefix "${_shipyard_cmake_bin}" DIRECTORY)
-if(NOT EXISTS "${_shipyard_cmake_prefix}/share/cmake/MavericksShipyard/MavericksShipyardConfig.cmake")
-  message(FATAL_ERROR
-    "mavericks-shipyard must be configured with shipyard-cmake "
-    "(/usr/local/bin/shipyard-cmake, installed by the shipyard pkg; in GitHub Actions, "
-    "ModernMavericks/shipyard/.github/actions/install@v1 provides it). This configure is running "
-    "${CMAKE_COMMAND}. IDEs and CMake GUIs: point their cmake setting at /usr/local/bin/shipyard-cmake.")
+#
+# CMAKE_HOST_APPLE, not APPLE (R-P1-23): the question is which cmake BINARY is running, which is a
+# property of the host, not the target. So a macOS box cross-compiling for Linux still has to use
+# shipyard-cmake -- the drift this prevents is just as real there -- while a Linux host skips the
+# check entirely. It has to: shipyard ships no Linux pkg and no Linux cmake, so demanding
+# shipyard-cmake where it cannot exist is incoherent, and it broke container-tools' two ubuntu-latest
+# jobs, which find_package shipyard only to read its scripts. install@v1 hands those jobs the action's
+# own checkout (MavericksShipyard_DIR), which is shipyard at the ref they pinned.
+if(CMAKE_HOST_APPLE)
+  get_filename_component(_shipyard_cmake_bin "${CMAKE_COMMAND}" DIRECTORY)
+  get_filename_component(_shipyard_cmake_prefix "${_shipyard_cmake_bin}" DIRECTORY)
+  if(NOT EXISTS "${_shipyard_cmake_prefix}/share/cmake/MavericksShipyard/MavericksShipyardConfig.cmake")
+    message(FATAL_ERROR
+      "mavericks-shipyard must be configured with shipyard-cmake "
+      "(/usr/local/bin/shipyard-cmake, installed by the shipyard pkg; in GitHub Actions, "
+      "ModernMavericks/shipyard/.github/actions/install@v1 provides it). This configure is running "
+      "${CMAKE_COMMAND}. IDEs and CMake GUIs: point their cmake setting at /usr/local/bin/shipyard-cmake.")
+  endif()
 endif()
 
 # Fail clearly if consumed VENDORED: if this config resolves from INSIDE the
