@@ -67,22 +67,27 @@ def need(pattern, why):
     if not find(pattern):
         bad.append(why)
 
-# Both slices must be configured with the updater on AND built, or the pkg cannot serve both kinds
-# of developer.
-for arch in ("x86_64", "arm64"):
-    conf = find(r"^cmake -S \S+ -B (\S+) .*-DSHIPYARD_BUILD_UPDATER=ON\b.*-DCMAKE_OSX_ARCHITECTURES=%s\b" % arch) \
-        + find(r"^cmake -S \S+ -B (\S+) .*-DCMAKE_OSX_ARCHITECTURES=%s\b.*-DSHIPYARD_BUILD_UPDATER=ON\b" % arch)
-    if not conf:
-        bad.append("no configure of the %s updater slice (-DSHIPYARD_BUILD_UPDATER=ON -DCMAKE_OSX_ARCHITECTURES=%s)" % (arch, arch))
-        continue
-    bdir = re.search(r"-B (\S+)", conf[0]).group(1)
-    if not find(r"^cmake --build %s(\s|$)" % re.escape(bdir)):
-        bad.append("the %s updater slice is configured in %s but never built" % (arch, bdir))
+build_steps = wf["jobs"]["build"]["steps"]
 
-# One pkg, from this checkout's package-pkg.sh, carrying each slice under the name its postinstall
-# looks for.
-need(r"^sh scripts/package-pkg\.sh .*--app-native \S*/MavericksShipyardUpdater\.app\"? .*--app-cross \S*/MavericksShipyardCrossUpdater\.app\"?",
-     "release.yml never runs scripts/package-pkg.sh with the native and cross updater apps")
+# shipyard builds with its own cmake: the build job installs itself in source-build mode. It cannot
+# install a RELEASED shipyard to test the commit that is about to become one.
+if not any(str(s.get("uses", "")) == "./.github/actions/install" and (s.get("with") or {}).get("source") == "build"
+           for s in build_steps):
+    bad.append("the build job must use ./.github/actions/install with source: build")
+
+# One universal updater: configured per arch at its own floor (the loop supplies $1/$2), built, merged.
+need(r'^for a in "x86_64 10\.9" "arm64 11\.0"; do$',
+     "the updater must be built for exactly x86_64/10.9 and arm64/11.0")
+need(r'^shipyard-cmake -S \. -B "?\$RUNNER_TEMP/upd-\$1"? .*-DSHIPYARD_BUILD_UPDATER=ON\b.*'
+     r'-DCMAKE_OSX_ARCHITECTURES="?\$1"? -DCMAKE_OSX_DEPLOYMENT_TARGET="?\$2"?',
+     "no per-arch shipyard-cmake configure of the updater (-DCMAKE_OSX_ARCHITECTURES/-DCMAKE_OSX_DEPLOYMENT_TARGET)")
+need(r'^shipyard-cmake --build "?\$RUNNER_TEMP/upd-\$1"?$', "the per-arch updater builds are never built")
+need(r"^sh scripts/lipo-merge-tree\.sh .*--allow-differ Contents/Info\.plist --require-archs \"x86_64 arm64\"$",
+     "the two updater builds are never merged with lipo-merge-tree.sh (--allow-differ Contents/Info.plist)")
+
+# The pkg: the CMake tree + shipyard's install prefix + the merged app.
+need(r"^sh scripts/package-pkg\.sh .*--cmake-tree \S+ .*--shipyard-prefix \S+ .*--app \S*/MavericksShipyardUpdater\.app\"?",
+     "release.yml never runs scripts/package-pkg.sh with --cmake-tree, --shipyard-prefix and the merged --app")
 
 # The built pkg is gated the way the family gates one: what the installer does on a box that has the
 # previous version, and whether the artifacts agree with each other.
@@ -111,34 +116,108 @@ tars = find(r"(^|[\s;|&(])tar\s") + find(r"\.tar\.gz\b")
 if tars:
     bad.append("the release tarball should be gone; the pkg is the asset now: %r" % tars[0])
 
-# The pkg is INSTALLED on this Apple Silicon runner before it is uploaded, and the updater left behind
-# must be the arm64 one. That is the only place the arm-picking postinstall ever runs for real before a
-# developer's box does: nothing on the 10.9 box can build or exercise the arm64 slice, and a pkg whose
-# scripts ran under Rosetta would keep the x86_64 updater (and delete the arm64 one) with every other
-# gate green. Checked within ONE step, bounded by timeout-minutes, ahead of the upload.
-build = wf["jobs"]["build"]["steps"]
-smoke = [i for i, s in enumerate(build)
+# The pkg is INSTALLED on this Apple Silicon runner before it is uploaded. That is the only place the
+# pkg's scripts ever run for real before a developer's box sees them, and nothing on the 10.9 box can
+# build or exercise the arm64 half. WHAT must then hold of the install is stated once, in
+# scripts/assert-installed-shipyard.sh (R-P1-17) -- this step must not restate it inline, or the two
+# callers drift and the fixture test stops covering either. Checked within ONE step, bounded by
+# timeout-minutes, ahead of the upload.
+smoke = [i for i, s in enumerate(build_steps)
          if any(re.search(r'^sudo installer -pkg "?dist/mavericks-shipyard-\$v\.pkg"? -target /(\s|$)', c) for c in step_cmds(s))]
 if not smoke:
     bad.append('release.yml never installs the pkg on the runner (sudo installer -pkg "dist/mavericks-shipyard-$v.pkg" -target /)')
 else:
-    i = smoke[0]
-    s = build[i]
-    sc = step_cmds(s)
-    exe = r'^exe="/Library/Application Support/ModernMavericks/MavericksShipyardCrossUpdater\.app/Contents/MacOS/MavericksShipyardCrossUpdater"$'
-    arch = r"""^lipo -info "\$exe" \| grep -q 'is architecture: arm64\$' \|\| fail """
-    if not (any(re.search(exe, c) for c in sc) and any(re.search(arch, c) for c in sc)):
-        bad.append("the install smoke never asserts the remaining updater (MavericksShipyardCrossUpdater) is arm64 via lipo -info")
+    i = smoke[0]; s = build_steps[i]; sc = step_cmds(s)
+    def has(p): return any(re.search(p, c) for c in sc)
+    if not has(r"^want=\"\$\(sed -n 's/\^CMAKE_VERSION=//p' cmake\.pin\)\"$"):
+        bad.append("the smoke never reads the pinned CMake version out of cmake.pin")
+    if not has(r'^sh scripts/assert-installed-shipyard\.sh --cmake-version "\$want" --root /(\s|$)'):
+        bad.append("the smoke never runs scripts/assert-installed-shipyard.sh against the installed root")
+    if not has(r'^\[ "\$bad" -eq 0 \] \|\| exit 1$'):
+        bad.append("the smoke's failures never fail the step ([ \"$bad\" -eq 0 ] || exit 1)")
     if not s.get("timeout-minutes"):
         bad.append("the install smoke step has no timeout-minutes; an install that hangs would hold the runner for the job's whole budget")
-    up = [j for j, t in enumerate(build) if str(t.get("uses", "")).startswith("actions/upload-artifact")]
+    up = [j for j, t in enumerate(build_steps) if str(t.get("uses", "")).startswith("actions/upload-artifact")]
     if not up or i > up[0]:
         bad.append("the install smoke must run BEFORE upload-artifact, so a pkg that fails it is never published")
+
+# The key scan stays between build and publish (another session's work; a rewrite must not drop it).
+jobs = wf.get("jobs") or {}
+if "scan-for-key.yml" not in str((jobs.get("scan") or {}).get("uses", "")):
+    bad.append("the scan job (./.github/workflows/scan-for-key.yml) is gone")
+if sorted((jobs.get("publish") or {}).get("needs") or []) != ["build", "scan"]:
+    bad.append("publish must need exactly [build, scan]")
+
+# Nothing of the superseded design survives in any command: no user package registry, no second
+# "cross" updater app, no postinstall picking a slice by hw.optional.arm64.
+for gone in (r"cmake/packages", r"register-with-cmake", r"CrossUpdater", r"hw\.optional\.arm64"):
+    if find(gone):
+        bad.append("release.yml still runs something mentioning %s" % gone)
 
 if bad:
     for b in bad:
         print("FAIL: " + b)
     sys.exit(1)
-print("ok: builds both slices, packages, gates the pkg, signs an appcast, install-smokes it, ships no tarball")
+print("ok: one universal updater, the prefix pkg, a shared install assertion, no tarball, scan before publish")
+PY
+
+# install@v1 is the other half of the same design: a consumer gets the PKG at the ref it pinned, and
+# only shipyard itself builds from source. Parsed the same way -- commands, never the file's text.
+python3 - "$here/../.github/actions/install/action.yml" <<'PY'
+import re, sys, yaml
+a = yaml.safe_load(open(sys.argv[1]))
+bad = []
+if "source" not in (a.get("inputs") or {}):
+    bad.append("install@v1 has no 'source' input (release | build)")
+steps = (a.get("runs") or {}).get("steps") or []
+def cmds(pred):
+    out = []
+    for s in steps:
+        if pred(str(s.get("if", ""))):
+            lines = [l for l in (s.get("run") or "").splitlines() if not l.lstrip().startswith("#")]
+            out += [" ".join(l.split()) for l in re.sub(r"\\\s*\n\s*", " ", "\n".join(lines)).splitlines() if l.strip()]
+    return out
+rel = cmds(lambda c: "'release'" in c)
+bld = cmds(lambda c: "'build'" in c)
+
+def exports(cs, name):
+    """Set in GITHUB_ENV, so LATER STEPS see it. A diagnostic `echo "... NAME=$x"` mentions the name
+    without exporting anything -- and both modes print one, so a bare substring search for the name
+    stays green after the export itself is deleted."""
+    for i, c in enumerate(cs):
+        if not re.search(r'(^|[\s"{])%s=' % name, c):
+            continue
+        if re.search(r'>> "\$GITHUB_ENV"$', c):
+            return True
+        for later in cs[i + 1:]:          # a { ... } group: the redirect rides the closing brace
+            if re.match(r'^\}\s*>> "\$GITHUB_ENV"$', later):
+                return True
+            if later.startswith("}"):
+                break
+    return False
+
+for pat, why in ((r'resolve-action-version\.sh', "release mode never resolves its ref to a version"),
+                 (r'^gh release download "v\$ver" -R ModernMavericks/shipyard --pattern ', "release mode never downloads the release's pkg"),
+                 (r'^sudo installer -pkg ', "release mode never installs the pkg")):
+    if not any(re.search(pat, c) for c in rel): bad.append(why)
+if not exports(rel, "SHIPYARD_SCRIPTS"):
+    bad.append("release mode never exports SHIPYARD_SCRIPTS")
+if not exports(bld, "SHIPYARD_SCRIPTS"):
+    bad.append("build mode never exports SHIPYARD_SCRIPTS")
+if not exports(bld, "SHIPYARD_CMAKE_TREE"):
+    bad.append("build mode never exports SHIPYARD_CMAKE_TREE, which is what release.yml packages")
+if not any(re.search(r'^echo "\$b" >> "\$GITHUB_PATH"$', c) for c in bld):
+    bad.append("build mode never puts the shipyard-* commands on PATH")
+# The tree goes to packaging UNTOUCHED: package-pkg.sh refuses a --cmake-tree with anything outside
+# bin/doc/man/share, and the build-mode prefix has shipyard installed into it.
+if any(re.search(r'SHIPYARD_CMAKE_TREE="?\$p', c) for c in bld):
+    bad.append("SHIPYARD_CMAKE_TREE must be the untouched CMake tree, not the prefix shipyard was installed into")
+if any("cmake/packages" in c for c in rel + bld):
+    bad.append("install@v1 still reads the CMake user package registry")
+if not any(re.search(r'uname -s.*Darwin', c) for c in cmds(lambda c: True)):
+    bad.append("install@v1 no longer fails clearly on a non-macOS runner")
+for b in bad: print("FAIL: " + b)
+if bad: sys.exit(1)
+print("ok: install@v1 installs the released pkg by the ref pinned, and source-builds only for shipyard")
 PY
 echo "PASS: shipyard-release-workflow"

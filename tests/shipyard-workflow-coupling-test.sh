@@ -10,6 +10,12 @@
 # 2. Only ONE workflow may run the suite on a push to main. When two do, "the repo is red" and "we
 #    published" are decided by different workflows: ci.yml failed on four consecutive commits while
 #    release.yml published v1.0.126, .129, .130 and .131 from the same trees.
+#
+# 3. release.yml runs ONLY on a push to main, so every step it does not share with ci.yml first
+#    executes on a push that is already publishing -- there is no rehearsal, and the flag-day push
+#    would be the first real run of the packaging path (spec 2026-09-11, R-P1-17). So ci.yml must
+#    build, install and assert the pkg on branch pushes, through the SAME scripts release.yml uses.
+#    The coupling is invisible in either file: each looks complete on its own.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 wf="$here/../.github/workflows"
@@ -60,5 +66,57 @@ if bad:
         print("FAIL:", b)
     sys.exit(1)
 print("ok: full-depth checkouts, and one suite-runner on main")
+PY
+
+python3 - "$wf" <<'PY'
+import os, re, sys, yaml
+wf = sys.argv[1]
+bad = []
+
+# COMMANDS, not the file's text: both files' comments name these scripts, so a substring search over
+# the text stays green after the invocation itself is deleted.
+def cmds(name):
+    d = yaml.safe_load(open(os.path.join(wf, name)))
+    out = []
+    for spec in (d.get("jobs") or {}).values():
+        for step in (spec.get("steps") or []):
+            lines = [l for l in (step.get("run") or "").splitlines() if not l.lstrip().startswith("#")]
+            joined = re.sub(r"\\\s*\n\s*", " ", "\n".join(lines))
+            out += [" ".join(l.split()) for l in joined.splitlines() if l.strip()]
+    return out
+
+ci, rel = cmds("ci.yml"), cmds("release.yml")
+def has(cs, pat): return any(re.search(pat, c) for c in cs)
+
+# Each of these is a step release.yml would otherwise run for the first time while publishing.
+for pat, what in ((r"^sh scripts/lipo-merge-tree\.sh ", "merge the two updater builds (scripts/lipo-merge-tree.sh)"),
+                  (r"^sh scripts/package-pkg\.sh ", "build the pkg (scripts/package-pkg.sh)"),
+                  (r"^sh scripts/assert_pkg_installs_in_place\.sh ", "gate the pkg (scripts/assert_pkg_installs_in_place.sh)"),
+                  (r"^sudo installer -pkg ", "install the pkg on the runner"),
+                  (r"^sh scripts/assert-installed-shipyard\.sh ", "assert the install (scripts/assert-installed-shipyard.sh)")):
+    if not has(rel, pat):
+        bad.append("release.yml no longer does: %s" % what)
+    elif not has(ci, pat):
+        bad.append("ci.yml does not rehearse release.yml's packaging path: it never runs %s, so that "
+                   "step's first real execution would be a push that is already publishing" % what)
+
+# ONE statement of what an installed shipyard must look like. Either workflow asserting it inline is
+# how the two drift apart, and the fixture test then covers neither.
+for name, cs in (("ci.yml", ci), ("release.yml", rel)):
+    for pat, what in ((r"cmake version ", "the CMake version"),
+                      (r"\benv -i\b", "the stripped-environment find_package probe"),
+                      # The INSTALLED app specifically. `lipo -info` on the freshly merged bundle in
+                      # $RUNNER_TEMP is the merge step logging what it produced, not a claim about
+                      # what Installer put on the volume.
+                      (r"^lipo -info .*/Library/Application Support/ModernMavericks/", "the installed updater's architectures")):
+        if has(cs, pat):
+            bad.append("%s asserts %s inline; that belongs in scripts/assert-installed-shipyard.sh, "
+                       "which both workflows and tests/assert-installed-shipyard-test.sh share" % (name, what))
+
+if bad:
+    for b in bad:
+        print("FAIL:", b)
+    sys.exit(1)
+print("ok: ci.yml rehearses the packaging path release.yml only ever runs while publishing")
 PY
 echo "PASS: shipyard-workflow-coupling"

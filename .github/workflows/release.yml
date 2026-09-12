@@ -26,7 +26,7 @@ concurrency:
 jobs:
   build:
     runs-on: macos-26   # the CMake modules gate on Apple clang; Linux cannot exercise them
-    timeout-minutes: 30
+    timeout-minutes: 90   # a cache miss builds CMake twice (x86_64/10.9 and arm64/11.0) before anything else
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
@@ -34,8 +34,14 @@ jobs:
         with:
           fetch-depth: 0        # shipyard-version.sh counts commits
 
-      - name: Install mavericks-shipyard (self)
+      # shipyard cannot install a RELEASED shipyard to test the one it is about to release, so it
+      # installs itself in source-build mode: the cached universal CMake tree plus this checkout,
+      # assembled into the same prefix shape the pkg lays down. Everything below configures with
+      # shipyard-cmake, exactly as a consumer must.
+      - name: Install mavericks-shipyard (self, source-build)
         uses: ./.github/actions/install
+        with:
+          source: build
 
       - uses: actions/setup-python@v7
         with:
@@ -55,8 +61,8 @@ jobs:
 
       - name: ctest (parameterized suites)
         run: |
-          cmake -S . -B "$RUNNER_TEMP/build"
-          ctest --test-dir "$RUNNER_TEMP/build" --output-on-failure
+          shipyard-cmake -S . -B "$RUNNER_TEMP/build"
+          shipyard-ctest --test-dir "$RUNNER_TEMP/build" --output-on-failure
 
       - name: Standalone test suites
         run: sh scripts/run-repo-tests.sh
@@ -70,38 +76,47 @@ jobs:
       # The release asset is a pkg that installs the payload on either kind of box and keeps itself
       # current. There is no tarball: nothing consumed it, and GitHub attaches source archives to
       # every tag for free.
-      - name: Build both updater slices
+      #
+      # One universal updater: a deployment floor is per-configure and arm64 has no 10.9, so it is
+      # built once per arch and merged. Both builds embed Sparkle's fat framework (CMakeLists), so the
+      # only Mach-O that differs is the updater's own executable; Info.plist differs by the floor,
+      # declared. /usr/bin/clang: the Apple toolchain, whatever else the runner puts on PATH.
+      - name: Build the universal updater
         run: |
           set -eu
-          # Two configures, not two targets: CMAKE_OSX_ARCHITECTURES and the deployment target are
-          # directory-scoped, and arm64 has no 10.9. Same shape as mavericks-golang's updater and
-          # updater-cross. This runner is arm64, so x86_64/10.9 is the cross build here -- it is still
-          # the "native" slice in the pkg's sense: the one that runs on the 10.9 box.
-          # /usr/bin/clang, as every family updater build pins: the Apple toolchain, whatever else the
-          # runner image puts on PATH.
-          cmake -S . -B "$RUNNER_TEMP/upd-native" -DSHIPYARD_BUILD_UPDATER=ON \
-            -DMAVERICKS_ALLOW_GENERIC_ICON=ON -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9
-          cmake --build "$RUNNER_TEMP/upd-native"
-          cmake -S . -B "$RUNNER_TEMP/upd-cross" -DSHIPYARD_BUILD_UPDATER=ON \
-            -DMAVERICKS_ALLOW_GENERIC_ICON=ON -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
-          cmake --build "$RUNNER_TEMP/upd-cross"
+          for a in "x86_64 10.9" "arm64 11.0"; do
+            set -- $a
+            shipyard-cmake -S . -B "$RUNNER_TEMP/upd-$1" -DSHIPYARD_BUILD_UPDATER=ON \
+              -DMAVERICKS_ALLOW_GENERIC_ICON=ON -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
+              -DCMAKE_OSX_ARCHITECTURES="$1" -DCMAKE_OSX_DEPLOYMENT_TARGET="$2"
+            shipyard-cmake --build "$RUNNER_TEMP/upd-$1"
+          done
+          sh scripts/lipo-merge-tree.sh \
+            --a "$RUNNER_TEMP/upd-x86_64/MavericksShipyardUpdater.app" \
+            --b "$RUNNER_TEMP/upd-arm64/MavericksShipyardUpdater.app" \
+            --out "$RUNNER_TEMP/MavericksShipyardUpdater.app" \
+            --allow-differ Contents/Info.plist --require-archs "x86_64 arm64"
+          # The executable changed under any bundle seal; re-seal ad hoc so arm64 accepts it.
+          codesign --force --deep --sign - "$RUNNER_TEMP/MavericksShipyardUpdater.app"
+          codesign --verify --deep "$RUNNER_TEMP/MavericksShipyardUpdater.app"
+          lipo -info "$RUNNER_TEMP/MavericksShipyardUpdater.app/Contents/MacOS/MavericksShipyardUpdater"
 
       - name: Package
         run: |
           set -eu
           v='${{ steps.ver.outputs.version }}'
           mkdir -p dist
-          # The payload is `cmake --install`'s layout, from its own configure: MAVERICKS_NO_USER_REGISTRY
-          # keeps this install from re-pointing the runner's registry (the self-install step above set
-          # it) at a staging prefix. The pkg's postinstall registers the INSTALLED payload instead.
-          cmake -S . -B "$RUNNER_TEMP/payload-build" -DMAVERICKS_NO_USER_REGISTRY=ON
-          cmake --install "$RUNNER_TEMP/payload-build" --prefix "$RUNNER_TEMP/payload-prefix"
+          # shipyard itself, installed to a scratch prefix; the pkg joins it to the CMake tree.
+          # $SHIPYARD_CMAKE_TREE (exported by install@v1 in source-build mode) is the UNTOUCHED tree,
+          # not the prefix that step installed shipyard into: package-pkg.sh refuses a --cmake-tree
+          # carrying anything but bin/doc/man/share, and refuses a --shipyard-prefix carrying anything
+          # but share. Two clean roots in, one prefix out.
+          shipyard-cmake -S . -B "$RUNNER_TEMP/payload-build"
+          shipyard-cmake --install "$RUNNER_TEMP/payload-build" --prefix "$RUNNER_TEMP/payload-prefix"
           sh scripts/package-pkg.sh \
-            --payload "$RUNNER_TEMP/payload-prefix/share/cmake/MavericksShipyard" \
-            --app-native "$RUNNER_TEMP/upd-native/MavericksShipyardUpdater.app" \
-            --app-cross  "$RUNNER_TEMP/upd-cross/MavericksShipyardCrossUpdater.app" \
+            --cmake-tree "$SHIPYARD_CMAKE_TREE" \
+            --shipyard-prefix "$RUNNER_TEMP/payload-prefix" \
+            --app "$RUNNER_TEMP/MavericksShipyardUpdater.app" \
             --version "$v" \
             --out "dist/mavericks-shipyard-$v.pkg"
           # What the installer will DO on a box that has the previous version: no relocation to a
@@ -153,51 +168,27 @@ jobs:
           sh scripts/artifact-facts.sh dist "$v" | sh scripts/check-artifact-conformance.sh
           ls -l dist
 
-      # INSTALL the pkg here: this runner is the only Apple Silicon box that sees it before a developer's
-      # does, and the 10.9 box can neither build nor exercise the arm64 slice. The way this goes wrong is
-      # silent -- if Installer ran the scripts under Rosetta, the postinstall would keep the x86_64
-      # updater and delete the arm64 one with every gate above still green -- so the slices and payload
-      # are HARD-asserted. The runner is ephemeral, so installing into / costs nothing.
-      #
-      # Registration is only WARNED on. It runs as the console user through their login shell, and this
-      # runner's login environment is not a developer's: a miss here is signal, not a release blocker.
+      # INSTALL the pkg here: this runner is the only Apple Silicon box that sees it before a developer
+      # does. What must hold of the result is stated ONCE, in scripts/assert-installed-shipyard.sh,
+      # because this step runs only on a push to main -- its first real execution would otherwise be
+      # the flag-day push, the one push that must not be a rehearsal (R-P1-17). ci.yml builds the same
+      # pkg on every branch push, installs it, and runs that same script; its own test drives the
+      # script against a fixture root. What is left here is what only this runner can do: install for
+      # real, and show the installer's log when something fails.
       - name: Install smoke (the pkg, on Apple Silicon)
         timeout-minutes: 10
         run: |
           set -eu
           v='${{ steps.ver.outputs.version }}'
-          apps="/Library/Application Support/ModernMavericks"
-          agents=/Library/LaunchAgents
-          payload=/usr/local/mavericks-shipyard
-          bad=0; show_log=0
-          fail() { echo "::error::install smoke: $*"; bad=1; }
-          scripts_log() {
+          bad=0
+          sudo installer -pkg "dist/mavericks-shipyard-$v.pkg" -target / || bad=1
+          want="$(sed -n 's/^CMAKE_VERSION=//p' cmake.pin)"
+          sh scripts/assert-installed-shipyard.sh --cmake-version "$want" --root / || bad=1
+          if [ "$bad" -ne 0 ]; then
             echo "---- /var/log/install.log, the pkg's scripts ----"
             sudo grep -E 'preinstall|postinstall|mavericks-shipyard' /var/log/install.log | tail -n 100 || true
-          }
-          sudo installer -pkg "dist/mavericks-shipyard-$v.pkg" -target / || fail "installer itself failed"
-          [ -f "$agents/dev.modernmavericks.mavericks-shipyard-cross-updatecheck.plist" ] || fail "the arm64 slice's LaunchAgent is missing"
-          [ -d "$apps/MavericksShipyardCrossUpdater.app" ] || fail "MavericksShipyardCrossUpdater.app is missing"
-          [ ! -e "$agents/dev.modernmavericks.mavericks-shipyard-updatecheck.plist" ] || fail "the x86_64 slice's LaunchAgent survived; launchd would run it, under Rosetta, at every login"
-          [ ! -e "$apps/MavericksShipyardUpdater.app" ] || fail "MavericksShipyardUpdater.app (x86_64) survived on Apple Silicon"
-          [ -f "$payload/MavericksShipyardConfig.cmake" ] || fail "$payload/MavericksShipyardConfig.cmake is missing"
-          [ -f "$payload/scripts/register-with-cmake.sh" ] || fail "$payload/scripts/register-with-cmake.sh is missing"
-          # lipo -info, not -archs (10.9's lipo has no -archs; the portability gate bans the idiom).
-          exe="/Library/Application Support/ModernMavericks/MavericksShipyardCrossUpdater.app/Contents/MacOS/MavericksShipyardCrossUpdater"
-          lipo -info "$exe" | grep -q 'is architecture: arm64$' || fail "the remaining updater is not a thin arm64 executable: $(lipo -info "$exe" 2>&1)"
-          reg="$HOME/.cmake/packages/MavericksShipyard/mavericks-shipyard"
-          if [ ! -f "$reg" ]; then
-            echo "::warning::install smoke: no registry entry at $reg -- the postinstall's registration (as the console user, via their login shell) never ran or found no cmake"
-            show_log=1
-          elif [ "$(cat "$reg")" != "$payload" ]; then
-            echo "::warning::install smoke: $reg points at $(cat "$reg"), not $payload -- the postinstall's registration did not reach this user or found no cmake on their login PATH"
-            show_log=1
-          else
-            echo "registry: $reg -> $payload"
           fi
-          if [ "$bad" -ne 0 ] || [ "$show_log" -ne 0 ]; then scripts_log; fi
           [ "$bad" -eq 0 ] || exit 1
-          echo "install smoke: arm64 updater kept, x86_64 updater removed, payload in $payload"
 
       - uses: actions/upload-artifact@v7
         with:
