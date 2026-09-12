@@ -43,6 +43,18 @@ The family has an older/simpler variant and a current/mature variant. **Start fr
   in shipyard-cmake's own prefix, so there is nothing to register and no order of installation to get
   right.
 
+  Point **GUI/IDE tooling** (CLion, VS Code's CMake Tools, an Xcode wrapper) at
+  `/usr/local/bin/shipyard-cmake` as its CMake executable — its bundled cmake is one of the ones the
+  config refuses, and the failure surfaces as an unexplained configure error inside the IDE.
+
+  **shipyard-cmake has no HTTPS in CMake's own downloader.** `file(DOWNLOAD https://…)` and
+  `FetchContent` over HTTPS fail with "Unsupported protocol". That is deliberate: it bootstraps with
+  `--no-system-libs` so it links nothing from the build host, CMake's bundled curl has no macOS TLS
+  backend without OpenSSL, and 10.9's libcurl is too old to build CMake 4.4 against. Since this is now
+  the only cmake the family may use, the limitation applies to every repo — **fetch with
+  `mavericks_fetch.sh` (tarball, pinned SHA-256) or `clone_pinned.sh` (git, pinned digest)**, which is
+  what the family already did and which verifies what `file(DOWNLOAD)` never did.
+
   `--install` is for **developing shipyard itself**. Install into a prefix of your own and override
   one configure with `CMAKE_PREFIX_PATH=<that prefix> shipyard-cmake …`; it is searched first, so the
   override is explicit and gone when you stop asking.
@@ -981,8 +993,23 @@ none of which anything detected. A convention that is not checked is a conventio
 | If `lines/` exists, every `lines/<id>/UPSTREAM_VERSION` has its OWN **capped** Renovate manager | An uncapped line walks onto the next major it was never built for; an unmanaged line goes stale silently; one manager spanning lines cannot cap each |
 | A Renovate manager whose captured pin ends in `-mavericks.N` has a `regex:` versioning that captures N | Default versioning coerces `-mavericks.N` away, so every repackage compares equal and the pin never moves — silently, with the dep listed as tracked. swift-runtime missed three swift-toolchain releases this way |
 | Nothing tracked reads the CMake **user package registry** (`~/.cmake/packages`) | shipyard now lives in `shipyard-cmake`'s own prefix and nothing writes that registry any more, so a script reading it reads a file that is no longer there — and reads it *silently*, resolving to an empty path rather than failing |
-| A repo's `build/msc.sh` (or `./msc.sh`) equals `$SHIPYARD_SCRIPTS/templates/msc.sh` **byte for byte** | It is the one piece each product carries in order to find shipyard. Eleven hand-kept copies had drifted into three variants, so "the incantation" meant three different things depending on which repo you opened |
-| No plain `cmake` / `ctest` / `cpack` at command position — in workflow `run:` bodies or in committed `*.sh` outside `tests/` | `MavericksShipyardConfig.cmake` refuses any other cmake at configure time; this finds the call in the PR instead of in the release. Comment lines and prose (`echo "… (cmake --build <dir>)"`) are not calls, and `tests/` is excluded because fixtures quote the command on purpose |
+| A repo's **committed** `build/msc.sh` (or `./msc.sh`) equals `$SHIPYARD_SCRIPTS/templates/msc.sh` **byte for byte** | It is the one piece each product carries in order to find shipyard. Eleven hand-kept copies had drifted into three variants, so "the incantation" meant three different things depending on which repo you opened. Tracked copies only — an untracked scratch copy in your worktree is not what the repo ships, and the failure shows the first differing line |
+| No plain `cmake` / `ctest` / `cpack` at command position — in workflow `run:` bodies or in committed `*.sh` outside `tests/` | `MavericksShipyardConfig.cmake` refuses any other cmake at configure time; this finds the call in the PR instead of in the release. `tests/` is excluded because fixtures quote the command on purpose |
+
+The last one reads **lines, not shell syntax**, so know its edges before you write around it:
+
+- **Not a call:** a whole comment line, and a bare `(` before the command — `echo "not built (cmake
+  --build <dir>)"` is how a script tells a human what to run, and three repos' only hit was that shape.
+- **Still a call, even in a quoted string or a heredoc:** anything with `;`, `&&`/`|` or a backtick
+  immediately before the command. `echo "to rebuild: cmake -S . -B b; cmake --build b"` and an
+  ordinary ``usage() { cat <<EOF … EOF }`` block listing commands both **fail the gate**. Telling
+  those from a real call needs a shell parser. Write such prose as a `#` comment, or declare a
+  `shipyard-cmake-only:<path>` deviation with the reason.
+- **Known false negatives**, all deliberate, because widening would flag far more prose than calls:
+  a path (`/usr/local/bin/cmake`), a variable (`"$CMAKE"`), and anything behind a prefix command —
+  `sudo cmake`, `env FOO=1 cmake`, `command cmake`, `xcrun cmake`, `time cmake`. Each is still caught
+  at configure time, where the config refuses the foreign cmake by name however it was spelled. The
+  gate moves the common case earlier; it is not the only thing standing there.
 
 Wire it with the reusable workflow — three lines, and it never changes when a check is added:
 
