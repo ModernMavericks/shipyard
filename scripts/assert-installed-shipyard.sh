@@ -14,7 +14,8 @@
 #
 # What it asserts, and why each is worth a step of its own:
 #   1. shipyard-cmake runs, and is the CMake in cmake.pin. A pkg built from a stale cache is a pkg
-#      that says one version and ships another.
+#      that says one version and ships another. And it is OURS: universal, with shipyard-ctest and
+#      shipyard-cpack beside it. A version match alone would accept a same-versioned Homebrew cmake.
 #   2. Under a STRIPPED environment (env -i: no PATH, no CMAKE_PREFIX_PATH, no registry), a probe
 #      resolves shipyard inside shipyard-cmake's OWN prefix. That is the whole mechanism the design
 #      rests on since the user package registry was removed -- if it ever stops working, every
@@ -70,6 +71,27 @@ if [ -x "$CM" ]; then
   fi
 else
   fail "no executable shipyard-cmake at $CM"
+fi
+
+# 1b. The shipped CMake is OURS. Everything in 1 and 2 would pass on a same-versioned Homebrew cmake
+#     copied into the prefix -- which is exactly what the fixture test builds -- so it proves nothing
+#     about what the pkg actually carries. What is ours about it: it is universal (we merge two
+#     single-arch builds with lipo; nobody else's is), and it comes with the other two commands, which
+#     both workflows and every consumer invoke by name.
+for c in shipyard-cmake shipyard-ctest shipyard-cpack; do
+  [ -x "$R/usr/local/bin/$c" ] \
+    || fail "no executable $R/usr/local/bin/$c -- the pkg puts all three on the default PATH"
+done
+if [ -x "$CM" ]; then
+  cmarchs="$(lipo -info "$CM" 2>&1 || true)"
+  case "$cmarchs" in
+    *x86_64*) ;;
+    *) fail "shipyard-cmake has no x86_64 slice, so it cannot run on 10.9: $cmarchs" ;;
+  esac
+  case "$cmarchs" in
+    *arm64*) ;;
+    *) fail "shipyard-cmake has no arm64 slice, so it cannot run on Apple Silicon: $cmarchs" ;;
+  esac
 fi
 
 # 2. It finds shipyard in its own prefix with nothing else to go on. env -i keeps a leaked

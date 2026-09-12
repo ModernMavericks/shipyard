@@ -10,14 +10,21 @@
 #     same relative ../mavericks-shipyard/bin/cmake symlink the pkg lays down
 #   - a foreign cmake pointed straight at that prefix is refused, naming shipyard-cmake
 #
-# The universal-updater assertion cannot be real here: making an x86_64+arm64 Mach-O needs a cross
-# toolchain, and this suite runs on a 10.9 box that has none. `lipo` is stubbed on PATH instead, which
-# proves the script's READING of lipo -info (both slices present / a slice missing) and nothing more.
+# The two universal-binary assertions (the shipped cmake, and the updater) cannot be real here:
+# making an x86_64+arm64 Mach-O needs a cross toolchain, and this suite runs on a 10.9 box that has
+# none. `lipo` is stubbed on PATH instead, answering per argument, which proves the script's READING
+# of lipo -info -- and which binary it read it for -- and nothing more.
+#
+# Note what that means for this fixture: its "shipyard-cmake" IS a foreign cmake of a matching
+# version. That is deliberate. It is what the version check alone would happily accept, and it is why
+# the script also demands a universal binary with shipyard-ctest and shipyard-cpack beside it.
 #
 # What only a real installed pkg can show, and therefore lives in CI rather than here: that Installer
 # actually lays the prefix down at /usr/local/mavericks-shipyard with working symlinks in
-# /usr/local/bin, that the CMake it ships is universal and runs on both kinds of box, that the merged
-# updater is genuinely fat, and that the pkg's preinstall/postinstall ran as themselves (not Rosetta).
+# /usr/local/bin, that the CMake it ships is genuinely fat and runs on both kinds of box, that the
+# merged updater is genuinely fat, that shipyard-ctest and shipyard-cpack are the real CMake tools
+# rather than files with the right names, and that the pkg's preinstall/postinstall ran as themselves
+# (not Rosetta).
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/.." && pwd)"
 S="$root/scripts/assert-installed-shipyard.sh"
@@ -57,6 +64,17 @@ cp "$real" "$prefix/bin/cmake"
 cp -R "$croot" "$prefix/share/$(basename "$croot")"
 # RELATIVE, exactly as package-pkg.sh writes it: the link must resolve on whatever volume it lands on.
 ln -s ../mavericks-shipyard/bin/cmake "$fx/usr/local/bin/shipyard-cmake"
+# The pkg puts three commands on the default PATH; ctest in particular is what both workflows and
+# every consumer run. Real binaries when this box has them beside its cmake, stubs otherwise: the
+# assertion is that they are there and executable, not what they do.
+for c in ctest cpack; do
+  if [ -x "$(dirname "$real")/$c" ]; then
+    cp "$(dirname "$real")/$c" "$prefix/bin/$c"
+  else
+    printf '#!/bin/sh\nexit 0\n' > "$prefix/bin/$c"; chmod +x "$prefix/bin/$c"
+  fi
+  ln -s "../mavericks-shipyard/bin/$c" "$fx/usr/local/bin/shipyard-$c"
+done
 "$real" -S "$root" -B "$w/sb" >/dev/null 2>&1
 HOME="$w/home-install" "$real" --install "$w/sb" --prefix "$prefix" >/dev/null 2>&1
 
@@ -69,19 +87,27 @@ printf 'not a real Mach-O; lipo is stubbed below\n' > "$updir/MavericksShipyardU
 run_home="$w/home-run"; mkdir -p "$run_home"
 
 stub="$w/stub"; mkdir -p "$stub"
-lipo_says() {  # $1 = the line the stub `lipo` prints for -info
+# Per-ARGUMENT, because the script now asks about two different binaries: the shipped cmake (must be
+# universal, or it is not ours) and the updater. A stub that answered the same for both could not tell
+# "the cmake is thin" from "the updater is thin".
+lipo_says() {  # $1 = the -info line for shipyard-cmake  $2 = the -info line for the updater
   cat > "$stub/lipo" <<EOF
 #!/bin/sh
-printf '%s\n' "$1"
+case "\$2" in
+  *MavericksShipyardUpdater) printf '%s\n' "$2" ;;
+  *) printf '%s\n' "$1" ;;
+esac
 EOF
   chmod +x "$stub/lipo"
 }
+UNIVERSAL_CMAKE="shipyard-cmake: architecture x86_64 arm64"
+UNIVERSAL_APP="MavericksShipyardUpdater: architecture x86_64 arm64"
 assert() {  # remaining args are appended to the script's own
   HOME="$run_home" PATH="$stub:$PATH" sh "$S" --root "$fx" "$@"
 }
 
 # --- the happy path -------------------------------------------------------------------------------
-lipo_says "$updir/MavericksShipyardUpdater: architecture x86_64 arm64"
+lipo_says "$UNIVERSAL_CMAKE" "$UNIVERSAL_APP"
 check "a correctly installed shipyard passes" 0 "finds shipyard in" \
   assert --cmake-version "$ver"
 
@@ -89,13 +115,30 @@ check "a correctly installed shipyard passes" 0 "finds shipyard in" \
 check "a shipyard-cmake that is not the pinned CMake fails" 1 "is not CMake" \
   assert --cmake-version 0.0.0-not-this-one
 
-lipo_says "$updir/MavericksShipyardUpdater: is architecture: arm64"
+# The shipped cmake must be OURS, not just the right version. Everything else in this fixture IS a
+# same-versioned foreign cmake, which is precisely why the version match alone proves nothing.
+lipo_says "shipyard-cmake: is architecture: arm64" "$UNIVERSAL_APP"
+check "a shipyard-cmake with no x86_64 slice fails (it could not run on 10.9)" 1 "shipyard-cmake has no x86_64 slice" \
+  assert --cmake-version "$ver"
+lipo_says "shipyard-cmake: is architecture: x86_64" "$UNIVERSAL_APP"
+check "a shipyard-cmake with no arm64 slice fails (it could not run on Apple Silicon)" 1 "shipyard-cmake has no arm64 slice" \
+  assert --cmake-version "$ver"
+lipo_says "$UNIVERSAL_CMAKE" "$UNIVERSAL_APP"
+
+for c in shipyard-ctest shipyard-cpack; do
+  mv "$fx/usr/local/bin/$c" "$w/cmd-aside"
+  check "a missing $c fails (both workflows and every consumer run it by name)" 1 "no executable .*$c" \
+    assert --cmake-version "$ver"
+  mv "$w/cmd-aside" "$fx/usr/local/bin/$c"
+done
+
+lipo_says "$UNIVERSAL_CMAKE" "MavericksShipyardUpdater: is architecture: arm64"
 check "an updater with no x86_64 slice fails" 1 "no x86_64 slice" \
   assert --cmake-version "$ver"
-lipo_says "$updir/MavericksShipyardUpdater: is architecture: x86_64"
+lipo_says "$UNIVERSAL_CMAKE" "MavericksShipyardUpdater: is architecture: x86_64"
 check "an updater with no arm64 slice fails" 1 "no arm64 slice" \
   assert --cmake-version "$ver"
-lipo_says "$updir/MavericksShipyardUpdater: architecture x86_64 arm64"
+lipo_says "$UNIVERSAL_CMAKE" "$UNIVERSAL_APP"
 
 mv "$updir/MavericksShipyardUpdater" "$w/updater-aside"
 check "a missing updater fails" 1 "no installed updater executable" \
