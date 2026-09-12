@@ -191,6 +191,27 @@ if gen "$r" 9.9p2-mavericks.1 >/dev/null 2>&1; then
   echo "FAIL nopins: a wired-up caller deriving zero pins should be fatal"; exit 1
 fi
 
+# --- a scaffolded/half-wired file at the CONVENTIONAL path must not be trusted by name alone --------
+# The path .github/workflows/repackage-on-ingredient-bump.yml is a convention, not a guarantee: a repo
+# that scaffolded it as a placeholder (or disabled it) has NOT actually wired itself to repackage on
+# ingredient bumps, even though the file exists there. Preferring it by existence alone reintroduces a
+# false FATAL on an otherwise legitimate release -- a repo with a real libressl bump that this
+# half-wired file was never watching must still ship as "packaging changes only", exactly as it did
+# before the caller-discovery work started.
+r="$work/unwired"; mkrepo "$r"
+cat > "$r/.github/workflows/repackage-on-ingredient-bump.yml" <<'YML'
+# placeholder -- not yet wired up
+on:
+  workflow_dispatch: {}
+YML
+( cd "$r" && git add -A && git commit -qm "scaffold placeholder caller" && git tag 9.9p2-mavericks.1 )
+printf '3.9.2\n' > "$r/components/libressl/version"
+( cd "$r" && git commit -qam "bump libressl" && git tag 9.9p2-mavericks.2 )
+gen "$r" 9.9p2-mavericks.2 >/dev/null \
+  || { echo "FAIL unwired: a half-wired placeholder at the conventional path must not be fatal"; exit 1; }
+grep -q 'packaging changes only' "$r/OUT.md" \
+  || { echo "FAIL unwired: an unwired placeholder must not claim ingredients moved"; cat "$r/OUT.md"; exit 1; }
+
 # --- a decoy workflow that only MENTIONS the caller must not outrank the real caller ----------------
 # release.yml sorts before repackage-on-ingredient-bump.yml in glob order, and a comment naming the
 # caller (a plausible thing to write, e.g. documenting a dispatch trigger) must not be mistaken for a

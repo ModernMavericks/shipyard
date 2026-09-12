@@ -121,14 +121,21 @@ printf '\n### What changed\n' >> "$tmp"
 # right next to it, however the two sort in a directory listing. Only a repo whose caller is named
 # something else falls through to discovery at all, and there the match requires an actual `uses:`
 # line -- a mention alone is not a call.
+#
+# The convention-named path is still only a NAME, though: a scaffolded or disabled placeholder can
+# sit there without ever calling the reusable workflow, and existence alone is not evidence it does.
+# The same `uses:` test that gates discovery gates the default path too, so a half-wired placeholder
+# there falls through to discovery (finding a real caller under another name) or to no caller at all
+# -- never to a false claim that this repo is wired up when it is not.
+CALLER=""
 default_caller="$MAVERICKS_ROOT/.github/workflows/repackage-on-ingredient-bump.yml"
-if [ -f "$default_caller" ]; then
+is_caller() { grep -Eq 'uses:.*repackage-on-ingredient-bump\.yml' "$1" 2>/dev/null; }
+if [ -f "$default_caller" ] && is_caller "$default_caller"; then
   CALLER="$default_caller"
 else
-  CALLER=""
   for f in "$MAVERICKS_ROOT"/.github/workflows/*.yml "$MAVERICKS_ROOT"/.github/workflows/*.yaml; do
     [ -f "$f" ] || continue
-    grep -Eq 'uses:.*repackage-on-ingredient-bump\.yml' "$f" 2>/dev/null && { CALLER="$f"; break; }
+    is_caller "$f" && { CALLER="$f"; break; }
   done
 fi
 PINS=""
