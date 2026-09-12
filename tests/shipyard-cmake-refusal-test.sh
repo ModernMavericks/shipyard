@@ -12,7 +12,12 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/.." && pwd)"
 . "$here/lib/cmake_fixture.sh"
 real="$(command -v cmake 2>/dev/null)" || { echo "SKIP: no cmake"; exit 77; }
-w="$(mktemp -d "${TMPDIR:-/tmp}/refusal-test.XXXXXX")"; trap 'rm -rf "$w"' EXIT
+# macOS sets TMPDIR with a trailing slash; a doubled slash in $w is harmless as scratch but case 1
+# below greps cmake's own STATUS output for a path built from $fx (under $w) -- and cmake normalizes
+# // away when it prints MavericksShipyard_DIR, so the grep fails on every real macOS session while
+# looking fine here with TMPDIR unset. Strip the trailing slash before use.
+_tmp="${TMPDIR:-/tmp}"
+w="$(mktemp -d "${_tmp%/}/refusal-test.XXXXXX")"; trap 'rm -rf "$w"' EXIT
 croot="$(printf 'message("${CMAKE_ROOT}")\n' > "$w/r.cmake"; "$real" -P "$w/r.cmake" 2>&1)"
 fx="$w/fx"; mkdir -p "$fx/bin" "$fx/share"
 cp "$real" "$fx/bin/cmake"
