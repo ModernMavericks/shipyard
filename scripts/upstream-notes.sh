@@ -21,8 +21,19 @@ set -eu
 SELF="$(cd "$(dirname "$0")" && pwd)"
 . "$SELF/lib.sh"          # sets MAVERICKS_ROOT if unset
 
+url_only=no
+if [ "${1:-}" = "--url-only" ]; then url_only=yes; shift; fi
 ver="${1:?upstream-notes: version required}"
 up="${ver%%-mavericks.*}"
+
+# Exit codes matter only in --url-only mode, where a caller decides whether a gap is fatal:
+#   3 = no link is due (a repackage)   4 = this repo has no hook   5 = the hook is broken
+# In the default section mode every one of these is still "print nothing, exit 0": appending a section
+# unconditionally is the whole point of that mode.
+bail() {  # $1 = --url-only exit code, $2 = message
+  [ "$url_only" = yes ] || { echo "upstream-notes: $2" >&2; exit 0; }
+  echo "upstream-notes: $2" >&2; exit "$1"
+}
 
 # build/ where a repo keeps its scripts there, scripts/ where it keeps them there (the swift repos) --
 # the same two homes derive-upstream-version.sh already has.
@@ -32,36 +43,36 @@ for d in build scripts; do
     hook="$MAVERICKS_ROOT/$d/upstream-release-notes-url.sh"; break
   fi
 done
-[ -n "$hook" ] || exit 0
+[ -n "$hook" ] || bail 4 "no build/ or scripts/upstream-release-notes-url.sh in $MAVERICKS_ROOT"
 
 # Tags we cannot see must not read as "no earlier release", or every repackage gets called new. A
 # shallow clone has none (the family's release jobs use fetch-depth: 0 for exactly this), and a git
 # that refuses the repo lists none. (A pre-2.15 git echoes the unknown flag back, which is not "true".)
 if [ "$(cd "$MAVERICKS_ROOT" && git rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then
-  echo "upstream-notes: $MAVERICKS_ROOT is a shallow clone, so its release tags are unknown; omitting the upstream section (use fetch-depth: 0)" >&2
-  exit 0
+  bail 5 "$MAVERICKS_ROOT is a shallow clone, so its release tags are unknown (use fetch-depth: 0)"
 fi
 if ! tags="$(cd "$MAVERICKS_ROOT" && git tag --list "$up-mavericks.*")"; then
-  echo "upstream-notes: cannot list release tags in $MAVERICKS_ROOT; omitting the upstream section" >&2
-  exit 0
+  bail 5 "cannot list release tags in $MAVERICKS_ROOT"
 fi
 for t in $tags; do
-  [ "$t" = "$ver" ] || exit 0
+  [ "$t" = "$ver" ] || bail 3 "$ver is a repackage of $up; no upstream link is due"
 done
 
 if ! url="$(cd "$MAVERICKS_ROOT" && sh "$hook" "$up")"; then
-  echo "upstream-notes: $hook failed for $up; omitting the upstream section" >&2
-  exit 0
+  bail 5 "$hook failed for $up; omitting the upstream section"
 fi
 case "$url" in
   http://*|https://*) ;;
-  *) echo "upstream-notes: $hook printed no URL for $up; omitting the upstream section" >&2; exit 0 ;;
+  *) bail 5 "$hook printed no URL for $up; omitting the upstream section" ;;
 esac
 # One URL, nothing else: a second line or a space would render as a broken link, not as a warning.
 case "$url" in
   *[[:space:]]*|*")"*)
-    echo "upstream-notes: $hook printed more than one URL for $up; omitting the upstream section" >&2
-    exit 0 ;;
+    bail 5 "$hook printed more than one URL for $up; omitting the upstream section" ;;
 esac
 
-printf '### Upstream\n\n- [Upstream release notes for %s](%s)\n' "$up" "$url"
+if [ "$url_only" = yes ]; then
+  printf '%s\n' "$url"
+else
+  printf '### Upstream\n\n- [Upstream release notes for %s](%s)\n' "$up" "$url"
+fi

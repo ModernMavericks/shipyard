@@ -2,9 +2,10 @@
 # upstream-notes.sh: link upstream's own release notes when -- and only when -- a release ships an
 # upstream version no earlier release shipped. The URL comes from the repo's own hook script.
 set -eu
+work="$(mktemp -d "${TMPDIR:-/tmp}/upstream-notes.XXXXXX")"; trap 'rm -rf "$work"' EXIT
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/upstream-notes.sh"
-w="$(mktemp -d "${TMPDIR:-/tmp}/upstream-notes-t.XXXXXX")"; trap 'rm -rf "$w"' EXIT
+w="$(mktemp -d "${TMPDIR:-/tmp}/upstream-notes-t.XXXXXX")"; trap 'rm -rf "$w" "$work"' EXIT
 cd "$w"
 git init -q -b main .
 git config user.email t@example.com; git config user.name tester
@@ -92,5 +93,49 @@ printf '#!/bin/sh\n:\n' > build/upstream-release-notes-url.sh
 out="$(sh "$S" 3.0.0-mavericks.1 2>"$w/err")"
 [ -z "$out" ] || { echo "FAIL empty output: $out"; exit 1; }
 grep -q 'upstream-notes' "$w/err" || { echo "FAIL empty not warned"; exit 1; }
+
+# --url-only: the generator puts the URL in its own sentence, and must distinguish "no link is due"
+# from "the link is broken". Everything returning 0 is how signal-desktop's 8.27.0-mavericks.1 shipped
+# a NEW upstream with no link and nothing red.
+mk_repo_with_hook() {   # $1 = dir, $2 = hook body
+  mkdir -p "$1/build"; ( cd "$1" && git init -q -b main . \
+    && git config user.email t@example.com && git config user.name tester \
+    && echo x > f && git add f && git commit -qm base )
+  printf '%s\n' "$2" > "$1/build/upstream-release-notes-url.sh"
+}
+
+u1="$work/u-new"
+mk_repo_with_hook "$u1" '#!/bin/sh
+printf "https://example.com/notes/%s\n" "$1"'
+( cd "$u1" && git tag 1.2.3-mavericks.1 )
+out="$(cd "$u1" && MAVERICKS_ROOT="$u1" sh "$S" --url-only 1.2.3-mavericks.1)" && rc=0 || rc=$?
+[ "$rc" = 0 ] && [ "$out" = "https://example.com/notes/1.2.3" ] \
+  || { echo "FAIL --url-only new upstream: rc=$rc out='$out'"; exit 1; }
+
+# a repackage: an earlier -mavericks.N of the same upstream exists -> exit 3, no output
+( cd "$u1" && git tag 1.2.3-mavericks.2 )
+out="$(cd "$u1" && MAVERICKS_ROOT="$u1" sh "$S" --url-only 1.2.3-mavericks.2 2>/dev/null)" && rc=0 || rc=$?
+[ "$rc" = 3 ] && [ -z "$out" ] || { echo "FAIL --url-only repackage: rc=$rc out='$out'"; exit 1; }
+
+# no hook at all -> exit 4
+u2="$work/u-nohook"
+mk_repo_with_hook "$u2" '#!/bin/sh
+exit 0'
+rm "$u2/build/upstream-release-notes-url.sh"
+( cd "$u2" && git tag 1.2.3-mavericks.1 )
+( cd "$u2" && MAVERICKS_ROOT="$u2" sh "$S" --url-only 1.2.3-mavericks.1 >/dev/null 2>&1 ); rc=$?
+[ "$rc" = 4 ] || { echo "FAIL --url-only no hook: rc=$rc"; exit 1; }
+
+# a hook that prints junk -> exit 5 (NOT 0: a broken link must be distinguishable from no link)
+u3="$work/u-junk"
+mk_repo_with_hook "$u3" '#!/bin/sh
+echo not-a-url'
+( cd "$u3" && git tag 1.2.3-mavericks.1 )
+( cd "$u3" && MAVERICKS_ROOT="$u3" sh "$S" --url-only 1.2.3-mavericks.1 >/dev/null 2>&1 ); rc=$?
+[ "$rc" = 5 ] || { echo "FAIL --url-only junk hook: rc=$rc"; exit 1; }
+
+# the DEFAULT mode is unchanged: section or nothing, always 0
+out="$(cd "$u3" && MAVERICKS_ROOT="$u3" sh "$S" 1.2.3-mavericks.1 2>/dev/null)" && rc=0 || rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] || { echo "FAIL default mode changed: rc=$rc out='$out'"; exit 1; }
 
 echo "PASS: upstream-notes"
