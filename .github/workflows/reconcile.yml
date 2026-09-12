@@ -1,0 +1,89 @@
+name: Reconcile release state
+
+# The backstop. An event-driven release has exactly one chance to happen: golang's one real
+# new-upstream release was silently lost to concurrency eviction and recovered by hand. A DECLARED
+# state that has not been realised stays visible, and this notices it.
+#
+# Deliberately cheap. It runs on ubuntu and does one thing -- render main's declared state, ask
+# whether a release carries that digest, and only if none does, dispatch the repo's real release
+# workflow. A quiet night is one API call per repo. A scheduled job that BUILT each product to check
+# it would be fourteen macOS builds a night, which is why this one never builds anything.
+#
+# Idempotent by construction: the dispatched run recomputes the same digest and stops if the release
+# turned up in between, so racing a push-triggered run cannot double-publish.
+
+on:
+  workflow_call:
+    inputs:
+      release-workflow:
+        description: "The release workflow to dispatch when a declared state has no release."
+        type: string
+        required: false
+        default: "release.yml"
+      dispatch-field:
+        description: "A -f key=value passed to the dispatched workflow to request a publish."
+        type: string
+        required: false
+        default: "local_release=true"
+
+permissions:
+  contents: write         # release-state-record.sh edits a release body; see the backfill step
+  actions: write          # dispatching the release run -- without it this fails as silently as the
+                          # lost release it exists to catch
+
+concurrency:
+  group: reconcile-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main           # main is where state is DECLARED; a branch is only a proposal
+          fetch-depth: 0      # version.sh reads tags
+
+      # shipyard's scripts at the ref this caller pinned -- the same bytes its release path uses.
+      - uses: ModernMavericks/shipyard/.github/actions/install@v1
+
+      - id: state
+        run: |
+          set -eu
+          digest="$(sh "$SHIPYARD_SCRIPTS/release-state.sh")"
+          version="$(sh "$SHIPYARD_SCRIPTS/version.sh" auto | sed -n 's/^FULL=//p')"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "declared state: $digest (would publish $version)"
+
+      - id: needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          answer="$(sh "$SHIPYARD_SCRIPTS/release-needed.sh" \
+            --digest '${{ steps.state.outputs.digest }}' \
+            --version '${{ steps.state.outputs.version }}' \
+            --repo '${{ github.repository }}')"
+          echo "$answer"
+          echo "answer=$answer" >> "$GITHUB_OUTPUT"
+
+      # A release that predates this design carries no digest. Record it rather than republish it.
+      - name: Backfill the digest onto an already-published release
+        if: contains(steps.needed.outputs.answer, 'BACKFILL=')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="$(printf '%s\n' '${{ steps.needed.outputs.answer }}' | sed -n 's/.*BACKFILL=//p')"
+          sh "$SHIPYARD_SCRIPTS/release-state-record.sh" \
+            --tag "$tag" --digest '${{ steps.state.outputs.digest }}' --repo '${{ github.repository }}'
+
+      - name: Dispatch the release run
+        if: startsWith(steps.needed.outputs.answer, 'PUBLISH')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          echo "::notice::no release realises ${{ steps.state.outputs.digest }}; dispatching ${{ inputs.release-workflow }}"
+          gh workflow run '${{ inputs.release-workflow }}' --ref main -f '${{ inputs.dispatch-field }}'
