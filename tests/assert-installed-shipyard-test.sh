@@ -31,7 +31,13 @@ here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/.." && pwd)"
 S="$root/scripts/assert-installed-shipyard.sh"
 
 real="$(command -v cmake 2>/dev/null)" || { echo "SKIP: no cmake to build a fixture prefix from"; exit 77; }
-w="$(mktemp -d "${TMPDIR:-/tmp}/assert-installed.XXXXXX")"; trap 'rm -rf "$w"' EXIT
+# macOS sets TMPDIR with a trailing slash; a doubled slash in $w is harmless as scratch but this test
+# passes the fixture root ($fx, built under $w) as --root, which assert-installed-shipyard.sh folds
+# into CFGDIR and greps for verbatim in cmake's own STATUS output -- and cmake normalizes // away when
+# it prints MavericksShipyard_DIR, so the grep fails on every real macOS session while looking fine
+# here with TMPDIR unset. Strip the trailing slash before use.
+_tmp="${TMPDIR:-/tmp}"
+w="$(mktemp -d "${_tmp%/}/assert-installed.XXXXXX")"; trap 'rm -rf "$w"' EXIT
 
 ver="$("$real" --version 2>&1 | sed -n 's/^cmake version //p' | head -1)"
 [ -n "$ver" ] || { echo "SKIP: cannot read this cmake's version"; exit 77; }

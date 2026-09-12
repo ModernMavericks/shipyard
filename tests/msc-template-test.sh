@@ -6,7 +6,12 @@ here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/.." && pwd)"
 . "$here/lib/cmake_fixture.sh"
 T="$root/scripts/templates/msc.sh"
 [ -f "$T" ] || { echo "FAIL: no $T"; exit 1; }
-w="$(mktemp -d "${TMPDIR:-/tmp}/msc-test.XXXXXX")"; trap 'rm -rf "$w"' EXIT
+# macOS sets TMPDIR with a trailing slash; a doubled slash in $w is harmless as scratch but this test
+# COMPARES a path built under $w (as a string) against a path shipyard-cmake's find_package printed
+# back, and cmake normalizes // away -- so an un-stripped TMPDIR makes the comparison fail on every
+# real macOS session while looking fine here with TMPDIR unset. Strip the trailing slash before use.
+_tmp="${TMPDIR:-/tmp}"
+w="$(mktemp -d "${_tmp%/}/msc-test.XXXXXX")"; trap 'rm -rf "$w"' EXIT
 
 # 1. SHIPYARD_SCRIPTS wins, and no cmake is run (PATH has none).
 mkdir -p "$w/s"
