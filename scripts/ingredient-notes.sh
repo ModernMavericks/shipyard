@@ -212,9 +212,25 @@ for arg in "$@"; do
         label_prefix="$(label_prefix_for "$path")"
         git show "$prev:$path" | assignments | sort > "$tmp/old"
         assignments < "$path" | sort > "$tmp/new"
+        # A DIGEST that moved together with the REF in the same file says nothing the REF bullet
+        # did not: they are two spellings of one bump (container-tools' components/*/version shape
+        # pins the same upstream ref two ways), and a pair of truncated hashes is the less readable
+        # one. A DIGEST moving ALONE is upstream re-tagging the SAME ref, which is exactly the thing
+        # a reader needs told, so only the moved-together case is suppressed. Computed once here,
+        # after both sorted snapshots exist and before the per-key loop below reads it, rather than
+        # inside the loop -- REF's own old/new values do not depend on which key the loop happens to
+        # be visiting.
+        ref_moved=no
+        oldref="$(grep '^REF	' "$tmp/old" | head -1 | cut -f2- || true)"
+        newref="$(grep '^REF	' "$tmp/new" | head -1 | cut -f2- || true)"
+        if [ -n "$oldref" ] && [ -n "$newref" ] && [ "$oldref" != "$newref" ]; then
+          ref_moved=yes
+        fi
         while IFS= read -r line; do
           key="${line%%	*}"; newv="${line#*	}"
           [ "$key" = "$exclkey" ] && continue
+          # See ref_moved above: a DIGEST riding along with a REF move in the same file is noise.
+          [ "$key" = DIGEST ] && [ "$ref_moved" = yes ] && continue
           oldv="$(grep "^$key	" "$tmp/old" | head -1 | cut -f2- || true)"
           if [ -z "$oldv" ]; then
             printf -- '- **%s%s**: added (%s)\n' "$label_prefix" "$key" "$newv" >> "$bullets"

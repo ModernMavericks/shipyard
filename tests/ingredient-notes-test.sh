@@ -549,4 +549,48 @@ printf '%s\n' "$out" | grep -q 'CA_SHA256.*still used' \
   && { echo "FAIL guard: a key with no real value was falsely reported as still assigned/derived: $out"; exit 1; }
 cd "$work"; rm -rf "$work16"
 
+# --- TASK 7: a DIGEST that moved together with its REF restates it; alone, it is real news --------
+# container-tools pins six components as REPO=/REF=/DIGEST= triples. A Renovate bump moves REF and
+# DIGEST together, so every bump used to print two bullets, the second a pair of truncated hashes
+# telling the reader nothing the REF bullet did not. But a DIGEST that moves ALONE is upstream
+# re-tagging the same ref -- genuinely worth telling someone -- so it must still be reported.
+work17="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work17"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+mkdir -p components/docker-cli
+cat > components/docker-cli/version <<'SH'
+REPO=https://github.com/docker/cli.git
+REF=v29.7.0
+DIGEST=88096ef00576baf72a9cb45caa45c0544c40e0a7
+SH
+git add -A; git commit -qm base; git tag base
+cat > components/docker-cli/version <<'SH'
+REPO=https://github.com/docker/cli.git
+REF=v29.8.0
+DIGEST=5f94fb0aa42a2cd1248c6e6c7fafb87546b9c8de
+SH
+out="$(sh "$S" base components/docker-cli/version)"
+printf '%s\n' "$out" | grep -qx -- '- \*\*docker-cli / REF\*\*: v29.7.0 -> v29.8.0' \
+  || { echo "FAIL task7-together: the REF move is still reported: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'DIGEST' \
+  && { echo "FAIL task7-together: a DIGEST that moved with its REF restates it: $out"; exit 1; }
+
+# ...but a DIGEST that moves ALONE (REF unchanged) is upstream re-tagging the same ref, and must
+# still be reported like any other moved pin.
+cat > components/docker-cli/version <<'SH'
+REPO=https://github.com/docker/cli.git
+REF=v29.8.0
+DIGEST=88096ef00576baf72a9cb45caa45c0544c40e0a7
+SH
+git add -A; git commit -qm retag-base; git tag retag-base
+cat > components/docker-cli/version <<'SH'
+REPO=https://github.com/docker/cli.git
+REF=v29.8.0
+DIGEST=5f94fb0aa42a2cd1248c6e6c7fafb87546b9c8de
+SH
+out="$(sh "$S" retag-base components/docker-cli/version)"
+printf '%s\n' "$out" | grep -qx -- '- \*\*docker-cli / DIGEST\*\*: 88096ef00576... -> 5f94fb0aa42a...' \
+  || { echo "FAIL task7-alone: a DIGEST moving alone is a re-tag and must be reported: $out"; exit 1; }
+cd "$work"; rm -rf "$work17"
+
 echo "PASS: ingredient-notes"
