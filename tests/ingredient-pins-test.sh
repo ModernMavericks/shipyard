@@ -128,4 +128,32 @@ printf '%s\n' "$out" | grep -qx 'pins.env:SWIFT_VERSION' \
 printf '%s\n' "$out" | grep -qx 'other.txt' \
   && { echo "FAIL block-scalar: other.txt should be excluded whole, got '$out'"; exit 1; }
 
+# --- FINDING 2 (round 3): the block scalar must end at a SIBLING KEY, not just at column 0 ---------
+# The reader terminated inblock only on a column-0 line, but every sibling key under the same `with:`
+# (dispatch-workflow:, dispatch-field:, ...) is itself indented -- so it (and its VALUE) got swallowed
+# into the own-upstream token list. That is only cosmetic when the leaked tokens don't coincide with a
+# real watched path -- but here the sibling's value ("other.txt") IS a real watched path, so the old
+# reader wrongly excludes it entirely, purely because of an unrelated sibling key three lines below
+# the block. A real YAML parser ends the block at the first line no MORE indented than
+# "own-upstream-paths:" itself; this reader must match that exactly.
+cat > .github/workflows/repackage-on-ingredient-bump.yml <<'YML'
+on:
+  push:
+    branches: [main]
+    paths: ['pins.env', 'other.txt']
+jobs:
+  repackage:
+    uses: ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
+    with:
+      own-upstream-paths: |
+        pins.env:SWIFT_VERSION
+      dispatch-field: other.txt
+YML
+git add -A; git commit -qm "block-scalar own-upstream-paths with a colliding sibling value"
+out="$(sh "$S")"
+printf '%s\n' "$out" | grep -qx 'pins.env:SWIFT_VERSION' \
+  || { echo "FAIL block-scalar sibling keys: pins.env:SWIFT_VERSION missing, got '$out'"; exit 1; }
+printf '%s\n' "$out" | grep -qx 'other.txt' \
+  || { echo "FAIL block-scalar sibling keys: other.txt wrongly excluded by a sibling key's value, got '$out'"; exit 1; }
+
 echo "PASS: ingredient-pins"

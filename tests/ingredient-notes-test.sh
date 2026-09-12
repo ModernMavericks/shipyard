@@ -211,8 +211,12 @@ cd "$work"; rm -rf "$work4"
 # is_kv_pins()'s first cut allowed a lowercase-tolerant key class, which matches base64 PADDING lines
 # in a real vendor/cacert.pem ("dZWAUWpLMKawYqGT8ZvYzsRjdT9ZR7E=", "MrY=", "IhNzbM8m9Yop5w==") as
 # one-line "assignments" -- reported as build ingredients (with the key itself as a bogus "added"
-# value, since oldv is always empty) on the next CA-bundle refresh. The key class must be UPPERCASE
-# ONLY, matching every real family pin (SWIFT_VERSION, MLS_VERSION, REPO, REF, DIGEST, BASE, ...).
+# value, since oldv is always empty) on the next CA-bundle refresh. Uppercase-only NARROWED but did
+# not CLOSE this class: an all-caps-and-digit padding line ("MK9=") still matches an uppercase-only
+# key with an empty value -- the reviewer measured ~0.46 expected such lines per real CA-bundle
+# refresh, i.e. even odds of resurrecting this exact false claim a third time. The value must hold
+# at least one non-"=" character (padding is only ever "=" characters, at the end; no real pin's
+# value is empty or all-"=").
 work5="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work5"
 git init -q -b main .
 git config user.email t@example.com; git config user.name tester
@@ -223,6 +227,7 @@ MIIDdZWAUWpLMKawYqGT8ZvYzsRjdT9ZR7E=
 rJgWVqA=
 IhNzbM8m9Yop5w==
 MrY=
+MK9=
 -----END CERTIFICATE-----
 PEM
 git add -A; git commit -qm base; git tag base
@@ -230,9 +235,59 @@ printf '\n' >> vendor/cacert.pem   # a genuine, tiny change: a real CA-bundle re
 out="$(sh "$S" base vendor/cacert.pem)"
 printf '%s\n' "$out" | grep -q -- '- \*\*vendor/cacert.pem\*\*: updated (' \
   || { echo "FAIL CRITICAL1: base64 blob no longer treated as opaque: $out"; exit 1; }
-printf '%s\n' "$out" | grep -qi 'MrY\|dZWAUWpL\|IhNzbM8m9Yop5w\|added\b' \
+printf '%s\n' "$out" | grep -qi 'MrY\|dZWAUWpL\|IhNzbM8m9Yop5w\|MK9\|added\b' \
   && { echo "FAIL CRITICAL1: base64 padding line(s) leaked as a bogus ingredient bullet: $out"; exit 1; }
 cd "$work"; rm -rf "$work5"
+
+# ...and the other direction: the value-must-have-content guard must not cost a single real pin.
+# Every real family KV pin the reviewer's table names must still render per-key.
+work5b="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work5b"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+mkdir -p build components/tailscale
+cat > build/versions.sh <<'SH'
+export MLS_VERSION=1.5.2-mavericks.3
+export CA_SHA256="3ff344e30b9b1ed2971044eabb438a08f2e2245ddb5f8ab1a3ad8b63ab4eaf91"
+export GO_SRC_SHA512="adacc6a34ad239d98277acd2ac8da867110da0b184dbbafb82e8a06d2b7fd234"
+SH
+cat > pins.env <<'ENV'
+SWIFT_VERSION="6.3.3"
+LLVM_SHA="aaaa"
+ENV
+cat > build.sh <<'SH'
+SWIFT_TAG="swift-6.3.3-RELEASE"
+TOOLCHAIN_SHA="cccc"
+SH
+printf 'REPO=https://github.com/tailscale/tailscale.git\nREF=v1.102.4\nDIGEST=deadbeef\n' \
+  > components/tailscale/version
+git add -A; git commit -qm base; git tag base
+cat > build/versions.sh <<'SH'
+export MLS_VERSION=1.5.2-mavericks.4
+export CA_SHA256="9a1c72b4aa0f1e8d5c3b7e6f2d4a8091ccee5577bb33ff11aa99887766554433"
+export GO_SRC_SHA512="adacc6a34ad239d98277acd2ac8da867110da0b184dbbafb82e8a06d2b7fd234"
+SH
+printf 'SWIFT_VERSION="6.3.4"\nLLVM_SHA="bbbb"\n' > pins.env
+printf 'SWIFT_TAG="swift-6.3.4-RELEASE"\nTOOLCHAIN_SHA="dddd"\n' > build.sh
+printf 'REPO=https://github.com/tailscale/tailscale.git\nREF=v1.102.5\nDIGEST=cafebabe\n' \
+  > components/tailscale/version
+out="$(sh "$S" base build/versions.sh pins.env build.sh components/tailscale/version)"
+printf '%s\n' "$out" | grep -qx -- '- \*\*MLS_VERSION\*\*: 1.5.2-mavericks.3 -> 1.5.2-mavericks.4' \
+  || { echo "FAIL both-directions: build/versions.sh MLS_VERSION dropped: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*CA_SHA256\*\*: 3ff344e30b9b... -> 9a1c72b4aa0f...' \
+  || { echo "FAIL both-directions: build/versions.sh CA_SHA256 dropped: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_VERSION\*\*: 6.3.3 -> 6.3.4' \
+  || { echo "FAIL both-directions: pins.env SWIFT_VERSION dropped: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*LLVM_SHA\*\*: aaaa -> bbbb' \
+  || { echo "FAIL both-directions: pins.env LLVM_SHA dropped: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_TAG\*\*: swift-6.3.3-RELEASE -> swift-6.3.4-RELEASE' \
+  || { echo "FAIL both-directions: build.sh SWIFT_TAG dropped: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*TOOLCHAIN_SHA\*\*: cccc -> dddd' \
+  || { echo "FAIL both-directions: build.sh TOOLCHAIN_SHA dropped: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*tailscale / REF\*\*: v1.102.4 -> v1.102.5' \
+  || { echo "FAIL both-directions: tailscale component REF dropped: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q -- 'updated (' \
+  && { echo "FAIL both-directions: a real KV pin fell through to the opaque byte-delta fallback: $out"; exit 1; }
+cd "$work"; rm -rf "$work5b"
 
 # --- G1 review round, CRITICAL 2: components/*/version bullets must always carry the component name
 # container-tools' real shape: SIX components share the same REPO=/REF=/DIGEST=/BASE= key names.

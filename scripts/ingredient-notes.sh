@@ -65,10 +65,18 @@ bullet() {  # name old new
 # lowercase-tolerant class also matches base64 PADDING lines in a real blob like vendor/cacert.pem
 # ("dZWAUWpLMKawYqGT8ZvYzsRjdT9ZR7E=") as a one-character "assignment", which is exactly the kind of
 # blob is_kv_pins() below exists to keep OUT of the per-key branch.
+#
+# Uppercase-only narrows but does not close that class: an ALL-CAPS-and-digit padding line ("MK9=")
+# still matches -- its "value" (everything after the first "=") is empty. Every base64 padding line
+# has "=" only at the end, so its value is either empty or made entirely of "="; a real pin's value
+# never is. Requiring the value to hold at least one non-"=" character is what actually kills the
+# class, rather than thinning it -- the reviewer measured ~0.46 expected such lines per real
+# CA-bundle refresh at uppercase-only, i.e. even odds of resurrecting this exact false claim again.
 assignments() {
   sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}//; s/^\([A-Z][A-Z0-9_]*\)=\(.*\)$/\1	\2/p' \
     | sed 's/[[:space:]]*#.*$//; s/["'"'"']//g; s/[[:space:]]*$//' \
-    | grep -v '[$`]' || true
+    | grep -v '[$`]' \
+    | awk -F'\t' '$2 ~ /[^=]/' || true
 }
 
 # A pin file gets the per-key rendering when it has at least one shell-style KEY=VALUE (or
@@ -84,13 +92,22 @@ assignments() {
 # [A-Za-z_][A-Za-z0-9_]* class matches as one-line "assignments", which would report base64
 # fragments as build ingredients on the next CA-bundle refresh -- exactly the false-claim shape
 # this whole fix exists to remove, reintroduced through the sniffer instead of the dispatch.
+#
+# And matching assignments()'s OTHER guard too: an all-caps-and-digit padding line ("MK9=") still
+# matches an uppercase-only key class, with an empty value. Requiring at least one non-"=" character
+# after the "=" is what actually excludes every base64 padding line (padding is only ever "="
+# characters, at the end) instead of merely thinning the false-positive rate.
 is_kv_pins() {
   awk '
     { line = $0
       sub(/^[[:space:]]*#.*/, "", line)
       gsub(/^[[:space:]]+/, "", line); gsub(/[[:space:]]+$/, "", line)
       if (line == "") next
-      if (line ~ /^(export[[:space:]]+)?[A-Z][A-Z0-9_]*=/) found = 1
+      if (line ~ /^(export[[:space:]]+)?[A-Z][A-Z0-9_]*=/) {
+        val = line
+        sub(/^(export[[:space:]]+)?[A-Z][A-Z0-9_]*=/, "", val)
+        if (val ~ /[^=]/) found = 1
+      }
     }
     END { exit(found ? 0 : 1) }
   ' "$1"

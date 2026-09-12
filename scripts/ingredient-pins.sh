@@ -45,8 +45,19 @@ patterns="$(awk '
 # form needs handling, and it must resolve to the SAME token list a real YAML parser would, or a
 # caller written with `|` (unused by any family repo today, but valid YAML) would silently exclude
 # nothing while repackage-decision.sh still skips: two scripts, two answers, from the same file.
+#
+# A block scalar ends at the first line whose indent is <= the block KEY's own indent -- not at
+# column 0. Every sibling key under the same `with:` (dispatch-workflow:, dispatch-field:, ...) is
+# itself indented, so terminating only on column 0 swallows them into the token list: a real YAML
+# parser stops at the first line no more indented than "own-upstream-paths:" itself, and this must
+# match it exactly or the first repo to write a sibling key after the block form gets a silently
+# wrong exclusion set.
 own="$(awk '
-  /^[[:space:]]*own-upstream-paths:[[:space:]]*[|>]/ { inblock = 1; next }
+  /^[[:space:]]*own-upstream-paths:[[:space:]]*[|>]/ {
+    match($0, /^[[:space:]]*/); keyindent = RLENGTH
+    inblock = 1
+    next
+  }
   /^[[:space:]]*own-upstream-paths:/ {
     v = $0
     sub(/^[[:space:]]*own-upstream-paths:[[:space:]]*/, "", v)
@@ -56,14 +67,15 @@ own="$(awk '
   }
   inblock {
     if ($0 ~ /^[[:space:]]*$/) next
-    if ($0 ~ /^[[:space:]]+/) {
+    match($0, /^[[:space:]]*/)
+    if (RLENGTH <= keyindent) { inblock = 0 }
+    else {
       v = $0
       sub(/^[[:space:]]+/, "", v)
       sub(/[[:space:]]*#.*$/, "", v)
       print v
       next
     }
-    inblock = 0
   }
 ' "$caller" | tr -d '"'"'"'')"
 
