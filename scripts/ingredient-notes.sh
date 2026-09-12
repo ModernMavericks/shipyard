@@ -5,12 +5,15 @@
 # Prints NOTHING when no pin moved, when there is no previous release, or when no pins were passed --
 # so callers can append its output unconditionally. Never fails a release: a missing pin path is
 # skipped with a warning, and call sites should still use `|| true`.
-#   usage: ingredient-notes.sh <prev-tag> [pin-path...]
+#   usage: ingredient-notes.sh <prev-tag> [pin-path[:KEY]...]
+#     a "path:KEY" argument (ingredient-pins.sh's own-upstream-paths key form) excludes just that KEY
+#     from the file's ingredient set -- the file's other keys are still reported normally.
 #
 # Shapes, because a pin is not always a bare version string:
-#   single-line file  ->  old -> new                      (components/<name>/version)
-#   *.sh assignments  ->  one bullet per changed KEY       (versions.sh: MLS_VERSION, CA_SHA256)
-#   anything else     ->  "updated (N -> M bytes)"        (vendor/cacert.pem and other blobs)
+#   single-line file    ->  old -> new                    (components/<name>/version)
+#   KEY=VALUE assignments -> one bullet per changed KEY    (versions.sh, pins.env: decided by CONTENT,
+#                                                            not by extension -- see is_kv_pins())
+#   anything else        ->  "updated (N -> M bytes)"      (vendor/cacert.pem and other blobs)
 set -eu
 
 prev="${1:-}"
@@ -62,7 +65,32 @@ assignments() {
     | grep -v '[$`]' || true
 }
 
-for path in "$@"; do
+# A pin file gets the per-key rendering when it has at least one shell-style KEY=VALUE (or
+# `export KEY=VALUE`) assignment line -- a CONTENT test, not an extension test. pins.env holds the
+# exact same shape as pins.sh under a different name (and, like pins.sh, may also source another
+# file or run a plain conditional -- assignments() below already ignores any line that is not itself
+# an assignment, so detecting the shape needs only ONE such line, not uniformity across the whole
+# file). A genuine blob (a patch, a vendored binary, a single bare version string) has none and falls
+# through to the opaque byte-delta fallback regardless of what it happens to be called.
+is_kv_pins() {
+  awk '
+    { line = $0
+      sub(/^[[:space:]]*#.*/, "", line)
+      gsub(/^[[:space:]]+/, "", line); gsub(/[[:space:]]+$/, "", line)
+      if (line == "") next
+      if (line ~ /^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=/) found = 1
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$1"
+}
+
+for arg in "$@"; do
+  # A "path:KEY" argument (ingredient-pins.sh's own-upstream-paths key form) names a file where one
+  # KEY is the repo's own upstream, not an ingredient; every OTHER key in the same file still is.
+  case "$arg" in
+    *:*) path="${arg%%:*}"; exclkey="${arg#*:}" ;;
+    *) path="$arg"; exclkey="" ;;
+  esac
   if [ ! -f "$path" ]; then
     echo "ingredient-notes: skipping missing pin $path" >&2
     continue
@@ -95,26 +123,6 @@ for path in "$@"; do
   [ "$(git rev-parse "$prev:$path")" = "$(git hash-object "$path")" ] && continue
 
   case "$path" in
-    *.sh)
-      git show "$prev:$path" | assignments | sort > "$tmp/old"
-      assignments < "$path" | sort > "$tmp/new"
-      while IFS= read -r line; do
-        key="${line%%	*}"; newv="${line#*	}"
-        oldv="$(grep "^$key	" "$tmp/old" | head -1 | cut -f2- || true)"
-        if [ -z "$oldv" ]; then
-          printf -- '- **%s**: added (%s)\n' "$key" "$newv" >> "$bullets"
-        elif [ "$oldv" != "$newv" ]; then
-          bullet "$key" "$oldv" "$newv"
-        fi
-      done < "$tmp/new"
-      # A key that stopped being pinned is a real change to what this product is built from, and
-      # walking only the new file would omit it entirely.
-      while IFS= read -r line; do
-        key="${line%%	*}"
-        grep -q "^$key	" "$tmp/new" \
-          || printf -- '- **%s**: removed\n' "$key" >> "$bullets"
-      done < "$tmp/old"
-      ;;
     *.patch)
       # A patch is an ingredient too -- it is baked into the product -- but a byte delta says nothing
       # about one. Report what a reader can act on: what the patch claims to do, and how much moved.
@@ -134,12 +142,35 @@ for path in "$@"; do
       fi
       ;;
     *)
-      oldlines="$(git show "$prev:$path" | wc -l | tr -d ' ')"
-      newlines="$(wc -l < "$path" | tr -d ' ')"
-      if [ "$newsize" -lt 256 ] && [ "$oldlines" -le 1 ] && [ "$newlines" -le 1 ]; then
-        bullet "$(pin_name "$path")" "$(git show "$prev:$path" | head -1)" "$(head -1 "$path")"
+      if is_kv_pins "$path"; then
+        git show "$prev:$path" | assignments | sort > "$tmp/old"
+        assignments < "$path" | sort > "$tmp/new"
+        while IFS= read -r line; do
+          key="${line%%	*}"; newv="${line#*	}"
+          [ "$key" = "$exclkey" ] && continue
+          oldv="$(grep "^$key	" "$tmp/old" | head -1 | cut -f2- || true)"
+          if [ -z "$oldv" ]; then
+            printf -- '- **%s**: added (%s)\n' "$key" "$newv" >> "$bullets"
+          elif [ "$oldv" != "$newv" ]; then
+            bullet "$key" "$oldv" "$newv"
+          fi
+        done < "$tmp/new"
+        # A key that stopped being pinned is a real change to what this product is built from, and
+        # walking only the new file would omit it entirely.
+        while IFS= read -r line; do
+          key="${line%%	*}"
+          [ "$key" = "$exclkey" ] && continue
+          grep -q "^$key	" "$tmp/new" \
+            || printf -- '- **%s**: removed\n' "$key" >> "$bullets"
+        done < "$tmp/old"
       else
-        printf -- '- **%s**: updated (%s -> %s bytes)\n' "$path" "$oldsize" "$newsize" >> "$bullets"
+        oldlines="$(git show "$prev:$path" | wc -l | tr -d ' ')"
+        newlines="$(wc -l < "$path" | tr -d ' ')"
+        if [ "$newsize" -lt 256 ] && [ "$oldlines" -le 1 ] && [ "$newlines" -le 1 ]; then
+          bullet "$(pin_name "$path")" "$(git show "$prev:$path" | head -1)" "$(head -1 "$path")"
+        else
+          printf -- '- **%s**: updated (%s -> %s bytes)\n' "$path" "$oldsize" "$newsize" >> "$bullets"
+        fi
       fi
       ;;
   esac

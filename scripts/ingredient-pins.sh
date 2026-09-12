@@ -6,6 +6,12 @@
 # maintaining a second copy is what makes the repackage trigger and the release notes impossible to
 # drift apart. Globs are expanded against tracked files, so 'components/**' becomes real paths.
 # A repo with no caller (no ingredients) prints nothing and exits 0.
+#
+# own-upstream-paths entries come in the same two forms repackage-decision.sh understands: a bare PATH
+# excludes that whole file, and a "path:KEY" entry (the swift repos' shape: every pin lives in one
+# pins.env/build.sh, and only SWIFT_VERSION is their own upstream) excludes just that KEY, printed
+# here as "path:KEY" so ingredient-notes.sh can exclude the same one key while still reporting the
+# file's other, genuinely-ingredient keys.
 #   usage: ingredient-pins.sh [caller-workflow-path]
 set -eu
 caller="${1:-.github/workflows/repackage-on-ingredient-bump.yml}"
@@ -51,10 +57,25 @@ for f in $(git ls-files); do
       *) continue ;;
     esac
     excluded=no
+    exclkey=""
     for o in $own; do
-      [ "$f" = "$o" ] && { excluded=yes; break; }
+      case "$o" in
+        *:*)
+          ofile="${o%%:*}"; okey="${o##*:}"
+          [ "$f" = "$ofile" ] && exclkey="$okey"
+          ;;
+        *)
+          [ "$f" = "$o" ] && { excluded=yes; break; }
+          ;;
+      esac
     done
-    [ "$excluded" = yes ] || printf '%s\n' "$f"
+    if [ "$excluded" = yes ]; then
+      :
+    elif [ -n "$exclkey" ]; then
+      printf '%s:%s\n' "$f" "$exclkey"
+    else
+      printf '%s\n' "$f"
+    fi
     break
   done
 done

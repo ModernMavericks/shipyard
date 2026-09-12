@@ -146,4 +146,65 @@ printf '%s\n' "$out" | grep -q -- '- \*\*0001-keyserver.patch\*\*: "boot2docker:
   || { echo "FAIL patch subject change: $out"; exit 1; }
 cd "$work"; rm -rf "$work2"
 
+# --- G1: rendering is decided by CONTENT, not by filename extension ------------------------------
+# The swift-toolchain regression: pins.env holds the exact same KEY=VALUE shape as pins.sh under a
+# different extension, but the dispatch was `case "$path" in *.sh)`, so pins.env fell through to the
+# generic byte-delta branch. A rewritten DERIVED expression (VERSION="$(cat VERSION)" ->
+# VERSION="$(sh resolve-version.sh)") is a code change, not an ingredient move -- assignments()'s
+# literal-only rule already knows this for .sh, and pins.env must get exactly the same answer.
+work3="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work3"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+cat > pins.env <<'ENV'
+SWIFT_VERSION="6.3.3"
+VERSION="$(cat "$HERE/VERSION")"
+ENV
+cp pins.env pins.sh
+git add -A; git commit -qm base; git tag base
+
+# only the derived VERSION expression is rewritten -- no literal pin moved
+cat > pins.env <<'ENV'
+SWIFT_VERSION="6.3.3"
+VERSION="$(MAVERICKS_ROOT="$HERE" sh "$SHIPYARD/resolve-version.sh")"
+ENV
+cp pins.env pins.sh
+
+out_env="$(sh "$S" base pins.env)"
+out_sh="$(sh "$S" base pins.sh)"
+[ -z "$out_env" ] \
+  || { echo "FAIL G1 pins.env: derived-only rewrite falsely reported as an ingredient move: $out_env"; exit 1; }
+[ "$out_env" = "$out_sh" ] \
+  || { echo "FAIL G1: identical bytes disagree by extension: env='$out_env' sh='$out_sh'"; exit 1; }
+
+# a REAL literal key move in a .env file must still be reported, per key -- content dispatch must not
+# just make everything opaque
+cat > pins.env <<'ENV'
+SWIFT_VERSION="6.3.4"
+VERSION="$(MAVERICKS_ROOT="$HERE" sh "$SHIPYARD/resolve-version.sh")"
+ENV
+out_env2="$(sh "$S" base pins.env)"
+printf '%s\n' "$out_env2" | grep -qx -- '- \*\*SWIFT_VERSION\*\*: 6.3.3 -> 6.3.4' \
+  || { echo "FAIL G1 pins.env real move not reported per-key: $out_env2"; exit 1; }
+printf '%s\n' "$out_env2" | grep -q 'bytes' \
+  && { echo "FAIL G1 pins.env: still using the opaque byte-delta fallback: $out_env2"; exit 1; }
+cd "$work"; rm -rf "$work3"
+
+# --- G2: a "path:KEY" pin argument excludes just that KEY, not the whole file --------------------
+# ingredient-pins.sh (fixed for G2) now emits "pins.env:SWIFT_VERSION" for a swift-shaped repo's own-
+# upstream key. This script must honour that suffix: SWIFT_VERSION (the repo's own upstream) must
+# never appear as a moved ingredient, while a real ingredient key in the SAME file still must.
+work4="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work4"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+printf 'SWIFT_VERSION="6.3.3"\nLLVM_SHA="aaaa"\n' > pins.env
+git add -A; git commit -qm base; git tag base
+# both the own-upstream key AND a real ingredient key move in the same release
+printf 'SWIFT_VERSION="6.3.4"\nLLVM_SHA="bbbb"\n' > pins.env
+out="$(sh "$S" base pins.env:SWIFT_VERSION)"
+printf '%s\n' "$out" | grep -q 'SWIFT_VERSION' \
+  && { echo "FAIL G2: own-upstream key SWIFT_VERSION leaked as an ingredient: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*LLVM_SHA\*\*: aaaa -> bbbb' \
+  || { echo "FAIL G2: real ingredient key LLVM_SHA in the same file was dropped: $out"; exit 1; }
+cd "$work"; rm -rf "$work4"
+
 echo "PASS: ingredient-notes"

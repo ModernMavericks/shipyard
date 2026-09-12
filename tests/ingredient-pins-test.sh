@@ -63,4 +63,42 @@ YML
 out="$(sh "$S")"
 [ -z "$out" ] || { echo "FAIL empty-glob: got '$out'"; exit 1; }
 
+# --- G2: own-upstream-paths' "path:KEY" form must be honoured here too --------------------------
+# repackage-decision.sh already understands "pins.env:SWIFT_VERSION" (a KEY inside a shared pin
+# file is the repo's own upstream, not an ingredient). This script only compared whole paths
+# ([ "$f" = "$o" ]), so "pins.env:SWIFT_VERSION" never matched the bare path "pins.env" and the file
+# was never excluded at all -- on the swift repos' next Swift bump, the notes would list SWIFT_VERSION
+# as a moved ingredient while repackage-decision.sh simultaneously says SKIP=own-upstream-changed.
+cat > .github/workflows/repackage-on-ingredient-bump.yml <<'YML'
+on:
+  push:
+    branches: [main]
+    paths: ['pins.env']
+jobs:
+  repackage:
+    uses: ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
+    with:
+      own-upstream-paths: pins.env:SWIFT_VERSION
+YML
+printf 'SWIFT_VERSION="6.3.3"\nLLVM_SHA="aaaa"\n' > pins.env
+git add -A; git commit -qm "add swift-shaped pins.env"
+out="$(sh "$S")"
+[ "$out" = "pins.env:SWIFT_VERSION" ] \
+  || { echo "FAIL path:KEY: expected the key-annotated path, got '$out'"; exit 1; }
+
+# a whole-path own-upstream entry must still exclude the file entirely (no regression)
+cat > .github/workflows/repackage-on-ingredient-bump.yml <<'YML'
+on:
+  push:
+    branches: [main]
+    paths: ['pins.env']
+jobs:
+  repackage:
+    uses: ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
+    with:
+      own-upstream-paths: pins.env
+YML
+out="$(sh "$S")"
+[ -z "$out" ] || { echo "FAIL whole-path still own-upstream: got '$out'"; exit 1; }
+
 echo "PASS: ingredient-pins"

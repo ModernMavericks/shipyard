@@ -422,4 +422,26 @@ r="$work/args"; mkrepo "$r"; ( cd "$r" && git tag 9.9p2-mavericks.1 )
 if ( cd "$r" && MAVERICKS_ROOT="$r" sh "$S" --tag 9.9p2-mavericks.1 --version 9.9p2-mavericks.1 \
        --out "$r/OUT.md" ) >/dev/null 2>&1; then echo "FAIL args: --product must be required"; exit 1; fi
 
+# --- G3: the footer '---' must not be emitted with nothing after it --------------------------------
+# shipyard's own release shape: no --min-os floor and (a fixture with no remote) no compare link. The
+# old code printed the rule unconditionally and then conditionally appended the floor/link, so a body
+# with neither ended in a dangling <hr> and nothing after it.
+r="$work/nofooter"; mkdir -p "$r/release-notes"
+( cd "$r" && git init -q -b main . && git config user.email t@example.com && git config user.name tester )
+( cd "$r" && echo x > README.md && git add -A && git commit -qm base && git tag v1.0.0 )
+( cd "$r" && MAVERICKS_ROOT="$r" sh "$S" --tag v1.0.0 --version 1.0.0 \
+    --product Shipyard --out "$r/OUT.md" ) >/dev/null
+grep -q -- '^---$' "$r/OUT.md" \
+  && { echo "FAIL G3: a footer rule with nothing after it was emitted"; cat "$r/OUT.md"; exit 1; }
+tail -1 "$r/OUT.md" | grep -qv -- '^---$' \
+  || { echo "FAIL G3: body ends with a dangling rule"; cat "$r/OUT.md"; exit 1; }
+sh "$here/../scripts/check-release-notes.sh" "$r/OUT.md" 1.0.0 >/dev/null \
+  || { echo "FAIL G3: no-footer body should still pass the family shape check"; exit 1; }
+
+# ...but when a floor line applies, the rule must still be emitted, right above it
+r="$work/withfooter"; mkrepo "$r"
+( cd "$r" && git tag 9.9p2-mavericks.1 )
+gen "$r" 9.9p2-mavericks.1 >/dev/null
+grep -q -- '^---$' "$r/OUT.md" || { echo "FAIL G3: footer rule missing when a floor line applies"; cat "$r/OUT.md"; exit 1; }
+
 echo "PASS: release-notes"

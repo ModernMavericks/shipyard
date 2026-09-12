@@ -91,7 +91,8 @@ PREV="$(sh "$SELF/previous-release-tag.sh" "$TAG" ${LINE:+"$LINE"})" && prevrc=0
   || die "previous-release-tag.sh failed (exit $prevrc) for $TAG; cannot decide the compare baseline or whether an ingredient moved without it"
 
 tmp="$(mktemp "${TMPDIR:-/tmp}/release-notes.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
+footer_tmp="$(mktemp "${TMPDIR:-/tmp}/release-notes-footer.XXXXXX")"
+trap 'rm -f "$tmp" "$footer_tmp"' EXIT
 
 # --- title ----------------------------------------------------------------------------------------
 if [ "$SELF_UPSTREAM" = yes ]; then
@@ -222,8 +223,11 @@ fi
 [ -z "$INGREDIENTS" ] || printf '\n%s\n' "$INGREDIENTS" >> "$tmp"
 
 # --- footer ---------------------------------------------------------------------------------------
-printf '\n---\n' >> "$tmp"
-[ -z "$MINOS" ] || printf 'Requires Mac OS X %s or later.\n' "$MINOS" >> "$tmp"
+# Buffered separately so the '---' rule above it is emitted ONLY when at least one footer line
+# follows: shipyard has neither a --min-os floor nor (in a fixture with no remote) a compare link, and
+# a body ending in a dangling <hr> with nothing after it is not a sentence either.
+: > "$footer_tmp"
+[ -z "$MINOS" ] || printf 'Requires Mac OS X %s or later.\n' "$MINOS" >> "$footer_tmp"
 
 # The compare link is objective "everything else that changed". Its absence is not an error: a first
 # release has no baseline, and a checkout with no remote (a test fixture) has no URL to build. This is
@@ -241,7 +245,12 @@ if [ -n "$PREV" ]; then
       *) REPO_URL="" ;;
     esac
   fi
-  [ -z "$REPO_URL" ] || printf '[All changes since %s](%s/compare/%s...%s)\n' "$PREV" "$REPO_URL" "$PREV" "$TAG" >> "$tmp"
+  [ -z "$REPO_URL" ] || printf '[All changes since %s](%s/compare/%s...%s)\n' "$PREV" "$REPO_URL" "$PREV" "$TAG" >> "$footer_tmp"
+fi
+
+if [ -s "$footer_tmp" ]; then
+  printf '\n---\n' >> "$tmp"
+  cat "$footer_tmp" >> "$tmp"
 fi
 
 # --- self-check: never hand back something the publisher would refuse -----------------------------
