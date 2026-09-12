@@ -25,6 +25,18 @@ on:
         type: string
         required: false
         default: "local_release=true"
+      upstream-file:
+        description: >-
+          Repo-relative path to the upstream version file, when it is not UPSTREAM_VERSION
+          (container-tools and tailscale: components/<name>/version; golang:
+          lines/126/UPSTREAM_VERSION). Sets $MAVERICKS_UPSTREAM_FILE for the state step, which BOTH
+          scripts there read: version.sh derives the version from it, and release-state.sh refuses
+          (exit 2) to render a declared `upstream` that is not the file version.sh reads. Without
+          this input such a repo cannot use this workflow at all -- it would hard-fail nightly on
+          the first run after adopting it.
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read          # check out main, and read published releases. NOT write: this workflow
@@ -55,7 +67,14 @@ jobs:
       # shipyard's scripts at the ref this caller pinned -- the same bytes its release path uses.
       - uses: ModernMavericks/shipyard/.github/actions/install@v1
 
+      # Both scripts below read $MAVERICKS_UPSTREAM_FILE, and they must agree about it: the digest
+      # tracks the declared `upstream` file, the version is derived from this one, and a product
+      # whose upstream is not UPSTREAM_VERSION has to say so in BOTH places it renders state -- here
+      # as well as wherever it calls version.sh. Empty is the default and means UPSTREAM_VERSION,
+      # because both readers use ${MAVERICKS_UPSTREAM_FILE:-...}.
       - id: state
+        env:
+          MAVERICKS_UPSTREAM_FILE: ${{ inputs.upstream-file }}
         run: |
           set -eu
           digest="$(sh "$SHIPYARD_SCRIPTS/release-state.sh")"

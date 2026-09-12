@@ -31,6 +31,29 @@ else:
             fail.append(f"reconcile.yml has no {name} input")
         elif ins[name].get("default") != default:
             fail.append(f"{name} default must be {default!r}, matching repackage-on-ingredient-bump.yml")
+    # release-state.sh refuses (exit 2) a declared `upstream` that is not the file version.sh reads.
+    # So a product whose upstream lives elsewhere -- container-tools and tailscale
+    # (components/*/version), golang (lines/126/UPSTREAM_VERSION) -- cannot render state here at all
+    # unless it can say where: without this input it would hard-fail nightly from its first run after
+    # adopting the documented ten-line caller.
+    if "upstream-file" not in ins:
+        fail.append("reconcile.yml has no upstream-file input: a product whose upstream is not "
+                    "UPSTREAM_VERSION cannot render state here, because release-state.sh exits 2 "
+                    "when the declared upstream is not the file version.sh reads")
+    elif ins["upstream-file"].get("default") != "":
+        fail.append("upstream-file must default to '' -- both readers use "
+                    "${MAVERICKS_UPSTREAM_FILE:-UPSTREAM_VERSION}, so empty means the default path")
+
+# ...and the input has to REACH the scripts. An input nothing wires through is the same hard failure
+# with an extra place to look.
+state_steps = [s for j in wf["jobs"].values() for s in j.get("steps", []) if s.get("id") == "state"]
+if not state_steps:
+    fail.append("reconcile.yml has no step with id: state -- the digest and version come from there")
+else:
+    env = state_steps[0].get("env") or {}
+    if "upstream-file" not in str(env.get("MAVERICKS_UPSTREAM_FILE", "")):
+        fail.append("the state step does not set MAVERICKS_UPSTREAM_FILE from inputs.upstream-file: "
+                    "both release-state.sh and version.sh read it there, and they must agree")
 
 # The whole point of the backstop is that a quiet night is nearly free. macOS here would be 14
 # product builds a night.
@@ -57,8 +80,11 @@ for needed in ("release-state.sh", "release-needed.sh"):
     if needed not in text:
         fail.append(f"reconcile.yml never calls {needed}")
 # The step cannot creep back: asserting the permission alone would not stop someone re-adding the
-# call and then "fixing" the permission it needs.
-if "release-state-record.sh" in text:
+# call and then "fixing" the permission it needs. Matched on the INVOCATION form, not the bare name:
+# $SHIPYARD_SCRIPTS is this workflow's only path to shipyard's scripts, so that prefix is the only
+# way it could call one -- while NAMING the script in the unreadable-marker guidance is exactly what
+# that warning has to do, since running it by hand is the escape.
+if "SHIPYARD_SCRIPTS/release-state-record.sh" in text:
     fail.append("reconcile.yml calls release-state-record.sh -- the nightly backstop must never "
                 "write a digest onto a release. That write is a migration step, run once, with a "
                 "digest computed from the released tag's own tree (release-state.sh --ref)")

@@ -591,6 +591,15 @@ which is why publishing is idempotent rather than triggered.
   `- <name>: <path>` or `- <name>: <path>:<KEY>`, one entry per line, names **canonical** so renaming
   a pin file can't move the digest. Exactly one entry must be named `upstream` — the upstream version
   file for a port, or (for a product that IS its own source) the version file it commits itself.
+  **`upstream` must name the very file `version.sh` reads**, i.e. `${MAVERICKS_UPSTREAM_FILE:-UPSTREAM_VERSION}`,
+  and `release-state.sh` **exits 2 naming both paths** when it does not. Otherwise a product could
+  track one file for its digest while the version came from another, and then publish `N+1` of the
+  *previous* upstream carrying the new upstream's contents. So a product whose upstream is not
+  `UPSTREAM_VERSION` — container-tools and tailscale (`components/<name>/version`), golang
+  (`lines/126/UPSTREAM_VERSION`) — must set `$MAVERICKS_UPSTREAM_FILE` in **both** places it renders
+  state: wherever it calls `version.sh`, *and* wherever it calls `release-state.sh` (in `release.yml`,
+  and via `reconcile.yml`'s `upstream-file` input, which sets it for that workflow's state step).
+  Setting it in only one is the drift the check exists to catch.
   **One list**: this section is authoritative for release identity, and is deliberately a SUBSET of
   the file's prose table above it, which documents everything baked in — including things that must
   never cut a release (bats; an SDK pinned by hash that will never move). `scripts/declared-state.sh`
@@ -1289,7 +1298,12 @@ in the same commit.
     dist/RELEASE_NOTES.md --digest "$(release-state.sh)"` in the build job, BEFORE
     `sign_and_appcast.sh` — never at publish time; mark the repo's existing release once, with
     `release-state-record.sh --tag T --digest "$(release-state.sh --ref T)"`, so the backstop's first
-    night finds it (a version match will NOT be inferred on your behalf); add the ten-line
+    night finds it (a version match will NOT be inferred on your behalf); **if the upstream is not
+    `UPSTREAM_VERSION`** (container-tools, tailscale, golang), set `$MAVERICKS_UPSTREAM_FILE` in
+    **both** places state is rendered — the `release.yml` step that calls `release-state.sh`, and the
+    `reconcile.yml` caller's `upstream-file:` input — because `release-state.sh` exits 2 when the
+    declared `upstream` is not the file `version.sh` reads, so setting it for `version.sh` alone
+    hard-fails the backstop nightly from its first run; add the ten-line
     `reconcile.yml` caller **with its own `permissions: {contents: read, actions: write}`** — a called
     workflow may not ask for more than its caller grants, so a stub that omits them leaves the
     backstop unable to read state or
