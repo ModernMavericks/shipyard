@@ -369,4 +369,39 @@ printf '%s\n' "$out" | grep -q -- '- \*\*noop.sh\*\*: updated (' \
   || { echo "FAIL .sh-no-assignments: expected a byte delta (deliberate choice), got: $out"; exit 1; }
 cd "$work"; rm -rf "$work9"
 
+# --- a pin that became DERIVED must not be announced as removed ---------------------------------
+# assignments() deliberately drops any value carrying $ or a backtick -- rewriting a derivation is a
+# code change, not an ingredient move -- but the removal walk used to read "absent from the literal
+# set" as "removed": SWIFT_TAG going from swift-6.3.3-RELEASE to "swift-${SWIFT_VERSION}-RELEASE"
+# (exactly the family's derive-never-repeat convention) was reported as a removed pin, which is
+# false -- the build still uses SWIFT_TAG, just no longer as a literal. GONE, which really does stop
+# being assigned, must still say "removed"; LLVM_BRANCH, unchanged, must produce no bullet at all.
+work10="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work10"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+cat > versions.sh <<'SH'
+SWIFT_VERSION=6.3.3
+SWIFT_TAG=swift-6.3.3-RELEASE
+LLVM_BRANCH=swift/release/6.3
+GONE=1.2.3
+SH
+git add -A; git commit -qm base; git tag base
+cat > versions.sh <<'SH'
+SWIFT_VERSION=6.3.4
+SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"
+LLVM_BRANCH=swift/release/6.3
+SH
+out="$(sh "$S" base versions.sh)"
+printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_VERSION\*\*: 6.3.3 -> 6.3.4' \
+  || { echo "FAIL derived: a moved literal is still reported as a move: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_TAG\*\*: now derived (was swift-6.3.3-RELEASE)' \
+  || { echo "FAIL derived: literal -> derived must say derived, not removed: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'SWIFT_TAG.*removed' \
+  && { echo "FAIL derived: SWIFT_TAG is still assigned; calling it removed is false: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*GONE\*\*: removed' \
+  || { echo "FAIL derived: a key that is genuinely gone is still reported as removed: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'LLVM_BRANCH' \
+  && { echo "FAIL derived: an unchanged key must produce no bullet: $out"; exit 1; }
+cd "$work"; rm -rf "$work10"
+
 echo "PASS: ingredient-notes"

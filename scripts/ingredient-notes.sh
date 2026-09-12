@@ -92,6 +92,15 @@ assignments() {
     | awk -F'\t' '$2 ~ /[^=]/' || true
 }
 
+# Every KEY the file ASSIGNS, literal or derived. assignments() drops derived values on purpose --
+# rewriting a $(...) is a code change, not an ingredient move -- but "not a literal any more" and
+# "not in the build any more" are different facts, and the removal walk below could not tell them
+# apart. swift-runtime's SWIFT_TAG became "swift-${SWIFT_VERSION}-RELEASE", exactly as the family's
+# derive-never-repeat convention requires, and its notes announced the pin as removed.
+assigned_keys() {
+  sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}//; s/^\([A-Z][A-Z0-9_]*\)=.*$/\1/p'
+}
+
 # A pin file gets the per-key rendering when it has at least one shell-style KEY=VALUE (or
 # `export KEY=VALUE`) assignment line -- a CONTENT test, not an extension test. pins.env holds the
 # exact same shape as pins.sh under a different name (and, like pins.sh, may also source another
@@ -191,12 +200,20 @@ for arg in "$@"; do
           fi
         done < "$tmp/new"
         # A key that stopped being pinned is a real change to what this product is built from, and
-        # walking only the new file would omit it entirely.
+        # walking only the new file would omit it entirely. But it stopped being pinned only if the
+        # file stopped assigning it at all -- a key still assigned, just no longer as a literal, is
+        # derived now, which is a different (and much smaller) fact.
+        assigned_keys < "$path" | sort -u > "$tmp/newkeys"
         while IFS= read -r line; do
-          key="${line%%	*}"
+          key="${line%%	*}"; oldv="${line#*	}"
           [ "$key" = "$exclkey" ] && continue
-          grep -q "^$key	" "$tmp/new" \
-            || printf -- '- **%s%s**: removed\n' "$label_prefix" "$key" >> "$bullets"
+          grep -q "^$key	" "$tmp/new" && continue     # still a literal: already handled above
+          if grep -q "^$key\$" "$tmp/newkeys"; then
+            printf -- '- **%s%s**: now derived (was %s)\n' \
+              "$label_prefix" "$key" "$(shorten "$oldv")" >> "$bullets"
+          else
+            printf -- '- **%s%s**: removed\n' "$label_prefix" "$key" >> "$bullets"
+          fi
         done < "$tmp/old"
       else
         oldlines="$(git show "$prev:$path" | wc -l | tr -d ' ')"
