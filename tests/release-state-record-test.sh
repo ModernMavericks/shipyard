@@ -59,9 +59,11 @@ rc=0; sh "$S" --tag t --digest "$D1" --body-file "$w/body4" >/dev/null 2>&1 || r
 
 # --- the NORMAL path: mark a notes file IN PLACE, before packaging ------------------------------
 #
-# This is what a product's release.yml calls before sign_and_appcast.sh, so the appcast's
-# <description> and the Release body are the same bytes. It takes no --tag: the notes file is not a
-# release yet, and inventing a tag argument for it would invite passing the wrong one.
+# This is what a product's release.yml calls before sign_and_appcast.sh. The appcast's
+# <description> and the Release body are both produced from this one notes file, so marking it
+# before packaging is what keeps them in agreement; a marker added later would leave the appcast's
+# copy one line short of the Release page's. It takes no --tag: the notes file is not a release yet,
+# and inventing a tag argument for it would invite passing the wrong one.
 
 # 6. Appends in place, preserving the notes.
 printf '## 1.2.3-mavericks.1\n\n### What changed\n\n- a thing\n' > "$w/notes"
