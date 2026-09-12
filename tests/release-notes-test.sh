@@ -243,6 +243,36 @@ grep -q '3.8.2 -> 3.9.2' "$r/OUT.md" \
 grep -q 'CMakeLists.txt' "$r/OUT.md" \
   && { echo "FAIL decoytrap: decoy caller's unrelated path leaked into the ingredient section"; cat "$r/OUT.md"; exit 1; }
 
+# --- a genuinely-wired caller written as a YAML folded scalar is still a caller ---------------------
+# `uses: >-` with the reusable workflow's URI on the CONTINUATION line is valid YAML and a real call,
+# but the word `uses:` and the filename are then on different lines, so a `uses:.*<filename>` regex
+# never matches. This repo IS wired up and its libressl pin really moved; reading it as "no caller"
+# ships "packaging changes only" at exit 0 -- the exact original openssh bug, silently, for nothing
+# but a formatting choice.
+r="$work/foldedcaller"; mkrepo "$r"
+cat > "$r/.github/workflows/repackage-on-ingredient-bump.yml" <<'YML'
+on:
+  push:
+    branches: [main]
+    paths:
+      - components/libressl/version
+jobs:
+  repackage:
+    uses: >-
+      ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
+    with:
+      own-upstream-paths: UPSTREAM_VERSION
+YML
+( cd "$r" && git add -A && git commit -qm "folded-scalar caller" && git tag 9.9p2-mavericks.1 )
+printf '3.9.2\n' > "$r/components/libressl/version"
+( cd "$r" && git commit -qam "bump libressl" && git tag 9.9p2-mavericks.2 )
+gen "$r" 9.9p2-mavericks.2 >/dev/null \
+  || { echo "FAIL foldedcaller: a folded-scalar 'uses:' is a real call and must not be fatal"; exit 1; }
+grep -q '### Build ingredients' "$r/OUT.md" \
+  || { echo "FAIL foldedcaller: wired caller's moved pin dropped, no ingredient section"; cat "$r/OUT.md"; exit 1; }
+grep -q '3.8.2 -> 3.9.2' "$r/OUT.md" \
+  || { echo "FAIL foldedcaller: a real libressl bump must not read as packaging-only"; cat "$r/OUT.md"; exit 1; }
+
 # --- FATAL: missing required arguments -------------------------------------------------------------
 r="$work/args"; mkrepo "$r"; ( cd "$r" && git tag 9.9p2-mavericks.1 )
 if ( cd "$r" && MAVERICKS_ROOT="$r" sh "$S" --tag 9.9p2-mavericks.1 --version 9.9p2-mavericks.1 \

@@ -119,17 +119,29 @@ printf '\n### What changed\n' >> "$tmp"
 # workflow that merely MENTIONS the caller (a comment documenting a dispatch trigger, e.g.
 # "# Dispatched by repackage-on-ingredient-bump.yml ...") can never outrank the real caller sitting
 # right next to it, however the two sort in a directory listing. Only a repo whose caller is named
-# something else falls through to discovery at all, and there the match requires an actual `uses:`
-# line -- a mention alone is not a call.
+# something else falls through to discovery at all.
 #
 # The convention-named path is still only a NAME, though: a scaffolded or disabled placeholder can
 # sit there without ever calling the reusable workflow, and existence alone is not evidence it does.
-# The same `uses:` test that gates discovery gates the default path too, so a half-wired placeholder
+# The same content test that gates discovery gates the default path too, so a half-wired placeholder
 # there falls through to discovery (finding a real caller under another name) or to no caller at all
 # -- never to a false claim that this repo is wired up when it is not.
+#
+# The test is "names the reusable workflow on a line that is not a comment", NOT "has a line matching
+# `uses:.*<filename>`". `uses: >-` with the URI on the continuation line is valid YAML and a genuine
+# call, but puts the word `uses:` and the filename on DIFFERENT lines; anchoring on `uses:` read that
+# wired-up repo as having no caller and shipped "packaging changes only" over a real libressl bump, at
+# exit 0 -- the original openssh bug reintroduced for nothing but a formatting choice. Excluding
+# comment lines (optional whitespace then `#`) is what still keeps the decoy's "# Dispatched by ..."
+# from counting as a call, and the placeholder, which names the workflow nowhere, out either way.
+# Residual: a non-comment line that names the file without calling it (`run: echo "... .yml"`) now
+# reads as a caller. That only matters in a repo with no real caller, and is rarer than the folded
+# scalar; a silent drop on a genuinely-wired repo is the worse of the two.
 CALLER=""
 default_caller="$MAVERICKS_ROOT/.github/workflows/repackage-on-ingredient-bump.yml"
-is_caller() { grep -Eq 'uses:.*repackage-on-ingredient-bump\.yml' "$1" 2>/dev/null; }
+is_caller() {
+  grep -v '^[[:space:]]*#' "$1" 2>/dev/null | grep -Fq 'repackage-on-ingredient-bump.yml'
+}
 if [ -f "$default_caller" ] && is_caller "$default_caller"; then
   CALLER="$default_caller"
 else
