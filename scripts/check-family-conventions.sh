@@ -589,6 +589,12 @@ if [ -n "$CI_FILES" ]; then
     # is worse still: the value stops at the first space, so the message named the garbage `${{`.
     # No family repo does this today; this test file's own pre-change baseline did, which is why
     # mkrepo needed rewriting, so it is plausible rather than exotic.
+    #
+    # The cost, said out loud rather than left to be discovered: for such a repo clause 4 then checks
+    # NOTHING -- not loosely, nothing at all. Deliberate. Failing a self-consistent repo would redden
+    # it and, through the moving @v1 tag, twelve others; clause 2 still catches a hand-written body
+    # there, and a false negative is the cheap direction. But a repo that genuinely hands its appcast
+    # a different file than it publishes, routed through variables, is invisible to this clause.
     case "$n" in
       *'$'*|*'{'*) continue ;;
     esac
