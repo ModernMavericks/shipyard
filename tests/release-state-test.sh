@@ -165,20 +165,36 @@ grep -q '1.2.3-mavericks.1' "$w/r18" || { echo "FAIL the absent-at-ref error doe
 # ...and that same declaration renders fine from the working tree, so the failure is about the ref.
 sh "$S" --root "$r" >/dev/null || { echo "FAIL the working tree stopped rendering"; exit 1; }
 
-# 19. BYTE order, pinned by names that DISAGREE about it. Both names in the golden fixture are plain
-#     alphabetic, so an edit dropping LC_ALL=C from the sort passed every assertion above -- while
-#     glibc collation treats `-` and `_` as ignorable at the primary level and orders `ab`, `a-b`,
-#     `a_b` differently from byte order (think macports-legacy-support). This digest is computed on
-#     macOS at build time and on ubuntu in the nightly reconcile, and two hosts disagreeing about one
-#     state is a nightly dispatch loop: one says the state is unreleased, the other publishes it.
-#     Asserted through --render, because the bytes are the wire format and a hash only says "differs".
+# 19. BYTE order, pinned by names that GENUINELY DISAGREE about it. The golden fixture's two names
+#     are plain alphabetic, so an edit dropping LC_ALL=C from the sort passed every assertion above.
+#     The obvious repair -- `a-b`, `a_b`, `ab` -- does NOT close it: measured on real glibc 2.39
+#     (ubuntu 24.04, locale-gen en_US.UTF-8), those three sort into byte order under BOTH C and
+#     en_US.UTF-8, so the fixture still could not fail on either host.
+#
+#     A DIGIT-BEARING name is what separates them, because glibc orders digits before letters at the
+#     primary level while ignoring `-` and `_` there. Measured, both hosts:
+#
+#       LC_ALL=C       a-b  a1  a_b  ab  upstream      (0x2D < 0x31 < 0x5F < 0x62)
+#       en_US.UTF-8    a1  a-b  a_b  ab  upstream      (glibc only; macOS BSD sort is byte order
+#                                                       in every locale it has, all 203 of them)
+#
+#     So this case fails on the reconcile's ubuntu host the moment LC_ALL=C goes, which is what the
+#     hazard actually is: the digest is computed on macOS at build time and on glibc in the nightly
+#     reconcile, and two hosts disagreeing about one state is a dispatch loop -- one says the state is
+#     unreleased, the other publishes it. Asserted through --render: the bytes ARE the wire format,
+#     and a hash mismatch only ever says "differs".
 mk "$w/n"
 printf '%s\n' '# Build ingredients' '' '## Declared state' '' '- upstream: UPSTREAM_VERSION' \
-  '- ab: pins.env:AB' '- a_b: pins.env:A_UNDER_B' '- a-b: pins.env:A_DASH_B' > "$w/n/INGREDIENTS.md"
-printf 'AB=3\nA_UNDER_B=2\nA_DASH_B=1\n' > "$w/n/pins.env"
+  '- ab: pins.env:AB' '- a_b: pins.env:A_UNDER_B' '- a-b: pins.env:A_DASH_B' '- a1: pins.env:A_ONE' \
+  > "$w/n/INGREDIENTS.md"
+printf 'AB=3\nA_UNDER_B=2\nA_DASH_B=1\nA_ONE=0\n' > "$w/n/pins.env"
 got="$(sh "$S" --root "$w/n" --render)"
-want="$(printf 'a-b=1\na_b=2\nab=3\nupstream=1.2.3')"
+want="$(printf 'a-b=1\na1=0\na_b=2\nab=3\nupstream=1.2.3')"
 [ "$got" = "$want" ] || { echo "FAIL the rendering is not in byte order: got '$got'"; exit 1; }
+# The expected value above is a hand-written literal, so prove independently that it IS byte order
+# rather than merely what the script happens to print: sort the same lines, C locale, and compare.
+byte="$(printf '%s\n' 'ab=3' 'a_b=2' 'a-b=1' 'a1=0' 'upstream=1.2.3' | LC_ALL=C sort)"
+[ "$want" = "$byte" ] || { echo "FAIL the expected rendering is not byte order: '$want' vs '$byte'"; exit 1; }
 
 # 20. The declared `upstream` must name the very file version.sh reads. Nothing else ties them
 #     together: declared-state.sh accepts any path, and lib.sh reads
