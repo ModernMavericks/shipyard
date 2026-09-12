@@ -20,6 +20,20 @@ all of them within minutes — which is why the version is derived from the comm
 No upstream release notes: shipyard is its own upstream -- it ports nothing, so there are no
 someone-else's notes for a release to link.
 
+## Release-doctrine surface
+
+Four more scripts (`scripts/declared-state.sh`, `scripts/release-state.sh`,
+`scripts/release-needed.sh`, `scripts/release-state-record.sh`) and one more reusable workflow
+(`.github/workflows/reconcile.yml`) ship as of this release. Consumers reach all five the same way
+they reach everything else here: through the moving `@v1` tag. What they do and how a product wires
+them in is documented in the conventions skill ("A release is a declared state, not an event") and
+the design spec, `docs/superpowers/specs/2026-09-12-release-doctrine-design.md`.
+
+shipyard itself carries no `## Declared state` section. Its version is
+`<UPSTREAM_VERSION>.<commit count>` (see the last row of the table above), so its own state changes
+on every push, and every push already publishes by design. Adopting the digest path here would only
+describe that status quo more slowly -- it is shipyard's declared exception, not a pattern to copy.
+
 ## Conformance deviations
 
 `check-artifact-conformance.sh` holds each release's artifacts to the family's schemes. Two of them

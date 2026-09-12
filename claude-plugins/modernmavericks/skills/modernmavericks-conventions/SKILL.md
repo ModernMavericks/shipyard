@@ -580,6 +580,48 @@ its `main` — in the left column, that push is a release.
   `SPARKLE_PRIVATE_KEY` (they resolve `release=no`).
 - Runner `macos-26` (fallback `macos-15`); `actions/*@v7` on new repos.
 
+### A release is a declared state, not an event
+
+A release is the realisation of a declared state, not the side effect of an event. Spec:
+`docs/superpowers/specs/2026-09-12-release-doctrine-design.md`. It changes what "should this push
+publish" means: not "did something happen" but "does a release already carry this exact state" —
+which is why publishing is idempotent rather than triggered.
+
+- **A product declares its state in a `## Declared state` section of `INGREDIENTS.md`**:
+  `- <name>: <path>` or `- <name>: <path>:<KEY>`, one entry per line, names **canonical** so renaming
+  a pin file can't move the digest. Exactly one entry must be named `upstream` — the upstream version
+  file for a port, or (for a product that IS its own source) the version file it commits itself.
+  **One list**: this section is authoritative for release identity, and is deliberately a SUBSET of
+  the file's prose table above it, which documents everything baked in — including things that must
+  never cut a release (bats; an SDK pinned by hash that will never move). `scripts/declared-state.sh`
+  parses it and documents the grammar. Inside the section, un-bulleted prose is ignored, but a line
+  that starts `- ` is always parsed as an entry — so an explanatory aside there must not start with a
+  dash, or it reads as a malformed declaration (deliberate: a typo'd entry and a bulleted note are
+  textually indistinguishable, and silently ignoring the shape that looks like an entry would swallow
+  real typos in the file that decides what gets published).
+- **`sh "$SHIPYARD_SCRIPTS/release-state.sh" [--root DIR] [--render]` renders the declaration
+  canonically and hashes it** → `v1:sha256:<hex>` (`--render` prints the canonical bytes instead, for
+  debugging and the golden test). `release-state-record.sh --notes-file dist/RELEASE_NOTES.md
+  --digest "$(...)"` writes `ModernMavericks-State: v1:sha256:<hex>` into the notes file **before
+  `sign_and_appcast.sh` runs — never at publish time.** That one file becomes both the Sparkle
+  appcast `<description>` and the GitHub Release body, and the family's artifact conformance compares
+  them byte for byte, so a marker added later fails it, correctly: a 10.9 user's update dialog would
+  be missing a line the Release page shows. `release-needed.sh --digest D --version V [--repo R]`
+  answers whether that state is already out — `PUBLISH`, `SKIP=already-released/<tag>`, or
+  `SKIP=already-released/<tag> BACKFILL=<tag>` for a pre-migration release that carries no digest yet.
+  `release-state-record.sh --tag T --digest D [--repo R]` backfills one. `reconcile.yml` is the
+  nightly backstop that calls all three and dispatches the real release workflow when nothing
+  realises the declared state.
+- **Two rules an implementer otherwise gets wrong.** An automatic publish also requires
+  `refs/heads/main` — the digest says whether a state *should* be released, not whether it is
+  *declared*; a `workflow_dispatch` may target any ref, because a human choosing one IS the
+  declaration. And the rendering is a **wire format**: changing it invalidates every recorded digest,
+  so a format bump means recompute, never republish.
+- **shipyard itself does not adopt this.** Its version is `<UPSTREAM_VERSION>.<commit count>`, so its
+  own state changes on every push, and every push already publishes by design (see "Release
+  workflow" above and shipyard's own `INGREDIENTS.md`). That is shipyard's declared exception, not a
+  pattern to copy — shipyard has no `## Declared state` section of its own.
+
 ## Version scaffolding (shared, wrapped)
 
 - **`version.sh`, `lib.sh`, and `release-notes-file.sh` live in shipyard.** A repo carries only
@@ -1221,6 +1263,17 @@ in the same commit.
    - refresh is suppressed — `DISABLE_AUTOUPDATER`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, a
      seeded plugin dir, managed settings blocking the marketplace, or being offline.
    Docs: code.claude.com/docs/en/discover-plugins, /plugins-reference, /plugin-marketplaces.
+10. Declare release state (see "A release is a declared state, not an event" above): add a
+    `## Declared state` section to `INGREDIENTS.md` (`- upstream: UPSTREAM_VERSION`, or the version
+    file the product commits if it is its own source); call `release-state-record.sh --notes-file
+    dist/RELEASE_NOTES.md --digest "$(release-state.sh)"` in the build job, BEFORE
+    `sign_and_appcast.sh` — never at publish time; add the ten-line `reconcile.yml` caller **with its
+    own `permissions: {contents: write, actions: write}`** — a called workflow may not ask for more
+    than its caller grants, so a stub that omits them leaves the backstop unable to backfill or
+    dispatch, failing as silently as the lost release it exists to catch (the family already
+    documents this trap in `scan-for-key.yml`'s header; say it here too, because this is the caller
+    people will copy); do not add a `tags:` trigger — tags are retired as an input, and dispatch
+    covers every case they served (`gh workflow run … --ref <any ref>`).
 
 ## Consolidation backlog
 
