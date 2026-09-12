@@ -61,7 +61,10 @@ if sh "$S" "$w/g" >"$w/g.out" 2>&1; then echo "FAIL non-canonical name was accep
 # 8. The same name twice is fatal, not last-one-wins.
 ing "$w/h" '- upstream: UPSTREAM_VERSION' '- cmake: pins.env:A' '- cmake: pins.env:B'
 if sh "$S" "$w/h" >"$w/h.out" 2>&1; then echo "FAIL duplicate name was accepted"; exit 1; fi
-grep -q cmake "$w/h.out" || { echo "FAIL duplicate-name error does not name it"; exit 1; }
+# Grep the REASON, not the name: the parser prints "cmake<TAB>pins.env:A" for the first valid entry
+# before it ever reaches the duplicate, so `grep -q cmake` would pass even if the duplicate check
+# were a bare `exit 1` that said nothing at all.
+grep -q 'declared twice' "$w/h.out" || { echo "FAIL duplicate-name error does not say so"; exit 1; }
 
 # 9. A section with entries but no `upstream` is fatal: there would be no version to compare against.
 ing "$w/i" '- cmake: pins.env:CMAKE_VERSION'

@@ -101,12 +101,38 @@ entry_bytes() {   # $1 = declared path, relative to the repo root
   fi
 }
 
+# The `upstream` entry must name the VERY FILE version.sh reads. Nothing else ties them together:
+# declared-state.sh accepts any path, and lib.sh's upstream_version() reads
+# ${MAVERICKS_UPSTREAM_FILE:-$MAVERICKS_ROOT/UPSTREAM_VERSION}. A product tracking one file for its
+# digest while version.sh derived the version from another would publish N+1 of the PREVIOUS upstream
+# carrying the NEW upstream's contents -- and nothing anywhere would say so.
+#
+# So a repo whose upstream lives elsewhere (container-tools and tailscale: components/*/version;
+# golang: lines/126/UPSTREAM_VERSION) must export $MAVERICKS_UPSTREAM_FILE wherever it calls this
+# script, exactly as it already must for version.sh. That coupling is the point: if the two scripts
+# disagree about which file the upstream lives in, that disagreement is the bug.
+assert_upstream_is_version_sh_input() {   # $1 = the declared path
+  want="${MAVERICKS_UPSTREAM_FILE:-UPSTREAM_VERSION}"
+  case "$want" in "$ROOT"/*) want="${want#"$ROOT"/}" ;; esac
+  want="${want#./}"
+  got="${1#./}"
+  [ "$got" != "$want" ] || return 0
+  echo "release-state: the declared 'upstream' is not the file version.sh reads" >&2
+  echo "    declared in INGREDIENTS.md: $got" >&2
+  echo "    read by version.sh:         $want" >&2
+  echo "    A digest tracking one file while the version is derived from another publishes N+1 of" >&2
+  echo "    the PREVIOUS upstream carrying the NEW upstream's contents. Point them at one file, or" >&2
+  echo "    export MAVERICKS_UPSTREAM_FILE here too (it is already needed for version.sh)." >&2
+  exit 2
+}
+
 while IFS="$(printf '\t')" read -r name spec || [ -n "$name" ]; do
   [ -n "$name" ] || continue
   case "$spec" in
     *:*) file="${spec%%:*}"; key="${spec##*:}" ;;
     *)   file="$spec"; key="" ;;
   esac
+  [ "$name" != upstream ] || assert_upstream_is_version_sh_input "$spec"
   if ! entry_bytes "$file"; then
     if [ -n "$REF" ]; then
       echo "release-state: '$name' is declared from $file, which $REF's tree does not have" >&2

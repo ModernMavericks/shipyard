@@ -165,4 +165,40 @@ grep -q '1.2.3-mavericks.1' "$w/r18" || { echo "FAIL the absent-at-ref error doe
 # ...and that same declaration renders fine from the working tree, so the failure is about the ref.
 sh "$S" --root "$r" >/dev/null || { echo "FAIL the working tree stopped rendering"; exit 1; }
 
+# 19. BYTE order, pinned by names that DISAGREE about it. Both names in the golden fixture are plain
+#     alphabetic, so an edit dropping LC_ALL=C from the sort passed every assertion above -- while
+#     glibc collation treats `-` and `_` as ignorable at the primary level and orders `ab`, `a-b`,
+#     `a_b` differently from byte order (think macports-legacy-support). This digest is computed on
+#     macOS at build time and on ubuntu in the nightly reconcile, and two hosts disagreeing about one
+#     state is a nightly dispatch loop: one says the state is unreleased, the other publishes it.
+#     Asserted through --render, because the bytes are the wire format and a hash only says "differs".
+mk "$w/n"
+printf '%s\n' '# Build ingredients' '' '## Declared state' '' '- upstream: UPSTREAM_VERSION' \
+  '- ab: pins.env:AB' '- a_b: pins.env:A_UNDER_B' '- a-b: pins.env:A_DASH_B' > "$w/n/INGREDIENTS.md"
+printf 'AB=3\nA_UNDER_B=2\nA_DASH_B=1\n' > "$w/n/pins.env"
+got="$(sh "$S" --root "$w/n" --render)"
+want="$(printf 'a-b=1\na_b=2\nab=3\nupstream=1.2.3')"
+[ "$got" = "$want" ] || { echo "FAIL the rendering is not in byte order: got '$got'"; exit 1; }
+
+# 20. The declared `upstream` must name the very file version.sh reads. Nothing else ties them
+#     together: declared-state.sh accepts any path, and lib.sh reads
+#     ${MAVERICKS_UPSTREAM_FILE:-UPSTREAM_VERSION}. A product tracking one file for its digest while
+#     the version came from another would publish N+1 of the PREVIOUS upstream carrying the NEW
+#     upstream's contents, and nothing anywhere would say so.
+mk "$w/p"; mkdir -p "$w/p/components/foo"; printf '1.2.3\n' > "$w/p/components/foo/version"
+printf '%s\n' '# Build ingredients' '' '## Declared state' '' \
+  '- upstream: components/foo/version' '- cmake: pins.env:CMAKE_VERSION' > "$w/p/INGREDIENTS.md"
+rc=0; sh "$S" --root "$w/p" >"$w/p.out" 2>&1 || rc=$?
+[ "$rc" = 2 ] || { echo "FAIL an upstream version.sh does not read should exit 2, got $rc"; exit 1; }
+grep -q 'components/foo/version' "$w/p.out" || { echo "FAIL the error does not name the declared path"; exit 1; }
+grep -q 'UPSTREAM_VERSION' "$w/p.out" || { echo "FAIL the error does not name the path version.sh reads"; exit 1; }
+
+# ...and it is the same coupling version.sh has, so the same override satisfies both. (The digest is
+# the golden one: which FILE the upstream lives in is not part of the rendering -- the NAME is.)
+got="$(MAVERICKS_UPSTREAM_FILE=components/foo/version sh "$S" --root "$w/p")"
+[ "$got" = "$GOLD" ] || { echo "FAIL MAVERICKS_UPSTREAM_FILE did not reconcile the two: got '$got'"; exit 1; }
+# An absolute override rooted at the repo is the same path, and must be accepted as one.
+got="$(MAVERICKS_UPSTREAM_FILE="$w/p/components/foo/version" sh "$S" --root "$w/p")"
+[ "$got" = "$GOLD" ] || { echo "FAIL a root-prefixed override was read as a different file: got '$got'"; exit 1; }
+
 echo "PASS: release-state"
