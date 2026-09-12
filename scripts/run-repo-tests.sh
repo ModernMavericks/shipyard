@@ -14,6 +14,15 @@
 set -eu
 preset="${1:-}"
 
+# Every real macOS session (every GitHub runner, and every 10.9 box with a login shell) sets TMPDIR
+# with a trailing slash. A box that runs with TMPDIR unset falls back to a clean /tmp and never
+# exercises the doubled-slash path a test's own `mktemp -d "$TMPDIR/x.XXXXXX"` produces everywhere
+# else -- which is exactly how two suites shipped broken and only failed in CI (see the fix for
+# msc-template-test.sh and assert-installed-shipyard-test.sh). Force the shape here so this box can
+# catch that class of defect too.
+: "${TMPDIR:=/tmp/}"
+export TMPDIR
+
 if [ -n "$preset" ] && [ -f CMakeLists.txt ] && grep -q 'add_test' CMakeLists.txt; then
   # shipyard-ctest, not ctest: the tree under test was configured by shipyard-cmake (the config
   # refuses any other), so its CTestTestfiles name that cmake's own generator.
