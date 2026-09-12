@@ -64,6 +64,19 @@ no '## OpenSSH 9.9p2 for Mavericks (9.9p2-mavericks.6)
 - **libressl**: 3.8.2 -> 3.9.2
 ' 9.9p2-mavericks.6 "empty What changed" "empty"
 
+# an empty ### section followed by a further ## heading must still be caught -- the ## branch that
+# resets tracking for a new top-level heading must not skip the pending-empty-section check
+no '## OpenSSH 9.9p2 for Mavericks (9.9p2-mavericks.6)
+
+### What changed
+- Repackage.
+
+### Empty Section
+
+## Appendix
+Some trailing content.
+' 9.9p2-mavericks.6 "empty section before a further ## heading" "empty"
+
 # the first line must be the title, not prose
 no 'Some prose first.
 

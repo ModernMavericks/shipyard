@@ -47,7 +47,7 @@ awk '
     if (head != "" && body == 0) { print head; exit 1 }
     head = $0; body = 0; next
   }
-  /^##[^#]/ { head = ""; body = 0; next }
+  /^##[^#]/ { if (head != "" && body == 0) { print head; exit 1 } head = ""; body = 0; next }
   /^---[[:space:]]*$/ { if (head != "" && body == 0) { print head; exit 1 } head = ""; body = 0; next }
   /[^[:space:]]/ { body = 1 }
   END { if (head != "" && body == 0) { print head; exit 1 } }
