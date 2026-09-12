@@ -128,4 +128,96 @@ cp "$w/n13" "$w/n13.first"
 sh "$S" --notes-file "$w/n13" --digest "$D1" >/dev/null
 cmp -s "$w/n13" "$w/n13.first" || { echo "FAIL a second run changed the file"; exit 1; }
 
+# --- --replace-unreadable: the escape release-needed.sh's SKIP=unreadable-marker/<tag> names ------
+#
+# Without it that answer is a dead end. release-needed.sh refuses to publish while a release records
+# a marker it cannot read, and tells you to recompute with `release-state.sh --ref <tag>` and
+# re-record -- but the re-record hit "already records a DIFFERENT state" and exited 3 BECAUSE a
+# marker was present, which is the very condition that blocked publishing. --digest accepts only
+# v1:sha256:<hex>, so a new-format digest could not be offered over an old one either. The only
+# recovery left was hand-editing a release body, which all three of those messages implicitly denied.
+RN="$here/../scripts/release-needed.sh"
+TAB="$(printf '\t')"
+
+# 15. It replaces exactly an unreadable marker, in place, preserving every other byte.
+printf '## 9.9.9-mavericks.2\n\n- a thing\n\nModernMavericks-State: v0:sha256:deadbeef\n' > "$w/u15"
+rc=0
+out="$(sh "$S" --tag 9.9.9-mavericks.2 --digest "$D1" --replace-unreadable \
+        --body-file "$w/u15" --out "$w/n15" 2>"$w/o15")" || rc=$?
+[ "$rc" = 0 ] || { echo "FAIL --replace-unreadable still refused (rc=$rc): $(cat "$w/o15")"; exit 1; }
+[ "$out" = "REPLACED=9.9.9-mavericks.2" ] || { echo "FAIL replace-unreadable: got '$out'"; exit 1; }
+grep -q "^ModernMavericks-State: $D1\$" "$w/n15" || { echo "FAIL the new digest was not written"; exit 1; }
+if grep -q 'v0:sha256:deadbeef' "$w/n15"; then echo "FAIL the unreadable marker survived"; exit 1; fi
+[ "$(grep -c 'ModernMavericks-State:' "$w/n15")" = 1 ] \
+  || { echo "FAIL replacing left more than one marker"; exit 1; }
+grep -q '^- a thing$' "$w/n15" || { echo "FAIL replacing lost a bullet"; exit 1; }
+grep -q '^## 9.9.9-mavericks.2$' "$w/n15" || { echo "FAIL replacing lost the heading"; exit 1; }
+
+# 16. And the escape actually escapes: the blocked answer is reproducible, and the rewritten body is
+#     what unblocks it. Asserting the write without asserting the unblocking is how a dead-end
+#     instruction ships in the first place.
+before="$(MAVERICKS_RELEASES="9.9.9-mavericks.2${TAB}v0:sha256:deadbeef" \
+  sh "$RN" --digest "$D1" --version 9.9.9-mavericks.3 2>/dev/null)"
+[ "$before" = "SKIP=unreadable-marker/9.9.9-mavericks.2" ] \
+  || { echo "FAIL the block this escapes is not reproducible: got '$before'"; exit 1; }
+dg="$(sed -n 's/^ModernMavericks-State:[[:space:]]*//p' "$w/n15" | head -1)"
+after="$(MAVERICKS_RELEASES="9.9.9-mavericks.2${TAB}${dg}" \
+  sh "$RN" --digest "$D1" --version 9.9.9-mavericks.3 2>/dev/null)"
+[ "$after" = "SKIP=already-released/9.9.9-mavericks.2" ] \
+  || { echo "FAIL after replacing, the state still does not read as released: got '$after'"; exit 1; }
+
+# 17. A READABLE digest that merely differs STILL exits 3, flag or no flag. Two declared states
+#     claiming one release is a question for a human, and "replace whatever is there" would make
+#     every recorded digest overwritable by any caller.
+printf 'notes\n\nModernMavericks-State: %s\n' "$D1" > "$w/u17"
+rc=0
+sh "$S" --tag t --digest "$D2" --replace-unreadable --body-file "$w/u17" --out "$w/n17" >"$w/o17" 2>&1 || rc=$?
+[ "$rc" = 3 ] || { echo "FAIL --replace-unreadable overwrote a readable digest (rc=$rc)"; exit 1; }
+[ ! -f "$w/n17" ] || { echo "FAIL a refused replace still wrote an output"; exit 1; }
+grep -q "$D1" "$w/o17" || { echo "FAIL the refusal does not show what is recorded"; exit 1; }
+
+# 18. The flag is not a licence to skip the other paths: the same digest is still UNCHANGED, and a
+#     body with no marker at all is still an ordinary append.
+out="$(sh "$S" --tag t --digest "$D1" --replace-unreadable --body-file "$w/u17" --out "$w/n18")"
+[ "$out" = "UNCHANGED=t" ] || { echo "FAIL --replace-unreadable broke idempotence: got '$out'"; exit 1; }
+printf 'just notes\n' > "$w/u18"
+out="$(sh "$S" --tag t --digest "$D1" --replace-unreadable --body-file "$w/u18" --out "$w/n18b")"
+[ "$out" = "BACKFILLED=t" ] || { echo "FAIL --replace-unreadable broke the plain append: got '$out'"; exit 1; }
+
+# 19. It works on a notes file too, and says REPLACED rather than RECORDED -- "recorded" would imply
+#     nothing was there.
+printf 'notes\n\nModernMavericks-State: garbage\n' > "$w/u19"
+out="$(sh "$S" --notes-file "$w/u19" --digest "$D1" --replace-unreadable)"
+[ "$out" = "REPLACED=$w/u19" ] || { echo "FAIL notes-file replace: got '$out'"; exit 1; }
+[ "$(tail -1 "$w/u19")" = "ModernMavericks-State: $D1" ] \
+  || { echo "FAIL notes-file replace, marker not last"; exit 1; }
+
+# 20. A marker NOT at the end is rewritten WHERE IT STANDS, not stripped and re-appended: the notes
+#     are what users read, and moving a line is a change to them.
+printf 'ModernMavericks-State: v0:old\n\n## notes\n\n- tail bullet\n' > "$w/u20"
+sh "$S" --tag t --digest "$D1" --replace-unreadable --body-file "$w/u20" --out "$w/n20" >/dev/null
+[ "$(head -1 "$w/n20")" = "ModernMavericks-State: $D1" ] \
+  || { echo "FAIL the marker moved: '$(head -1 "$w/n20")'"; exit 1; }
+[ "$(tail -1 "$w/n20")" = "- tail bullet" ] || { echo "FAIL the body's own tail moved"; exit 1; }
+
+# 21. TWO unreadable markers leave ONE readable one. Leaving the second behind would re-block the
+#     next lookup, which is the thing this flag exists to unblock.
+printf 'ModernMavericks-State: v0:a\n\nnotes\n\nModernMavericks-State: v0:b\n' > "$w/u21"
+sh "$S" --tag t --digest "$D1" --replace-unreadable --body-file "$w/u21" --out "$w/n21" >/dev/null
+[ "$(grep -c 'ModernMavericks-State:' "$w/n21")" = 1 ] \
+  || { echo "FAIL two unreadable markers did not collapse to one"; exit 1; }
+grep -q "^ModernMavericks-State: $D1\$" "$w/n21" || { echo "FAIL the surviving marker is not the new one"; exit 1; }
+
+# 22. THE FIRST READABLE MARKER WINS, not simply the first. An unreadable line ABOVE a valid digest
+#     used to decide, which made this body "a conflicting record" to this script and (worse) an
+#     unreadable one to release-needed.sh -- so a state demonstrably already released, two lines
+#     further down, blocked publishing forever.
+printf 'ModernMavericks-State: v0:stale\n\nnotes\n\nModernMavericks-State: %s\n' "$D1" > "$w/u22"
+rc=0
+out="$(sh "$S" --tag t --digest "$D1" --body-file "$w/u22" --out "$w/n22" 2>/dev/null)" || rc=$?
+[ "$rc" = 0 ] \
+  || { echo "FAIL a readable marker below an unreadable one was not seen (rc=$rc)"; exit 1; }
+[ "$out" = "UNCHANGED=t" ] \
+  || { echo "FAIL a readable marker below an unreadable one was ignored: got '$out'"; exit 1; }
+
 echo "PASS: release-state-record"

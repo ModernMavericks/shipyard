@@ -13,25 +13,6 @@ upstream_version() {
   tr -d '[:space:]' < "${MAVERICKS_UPSTREAM_FILE:-$MAVERICKS_ROOT/UPSTREAM_VERSION}"
 }
 
-# The state marker recorded in a release body or a notes file: "ModernMavericks-State: <value>"
-# (spec 2026-09-12, decision 2). Reads a body on STDIN; prints the first marker's value, or nothing.
-#
-# ONE reader for the family, because two readers disagreeing is a live hazard rather than a style
-# point. release-needed.sh once recognised only `ModernMavericks-State: v1:sha256:<hex>` while
-# release-state-record.sh took anything after the key, so a body carrying an older-format marker was
-# "no digest recorded" to the first and "a CONFLICTING digest" to the second -- and per ruling 1 the
-# second exits 3 and fails the job. After the format bump the spec promises is safe ("recompute,
-# never republish"), every migrated repo would have gone red nightly with no self-healing path.
-#
-# FIRST MARKER WINS, deliberately: a body with two markers is already broken, and taking the first
-# makes both callers wrong about it in the same way instead of differently. (Both scripts had
-# independently chosen `head -1`; that agreement is now structural rather than a coincidence.)
-# Trailing whitespace is not part of the value -- a body is hand-editable, and a stray space must not
-# turn a matching digest into a conflicting one.
-state_marker() {
-  sed -n 's/^ModernMavericks-State:[[:space:]]*//p' | sed 's/[[:space:]]*$//' | head -1
-}
-
 # Is VALUE a state digest THIS shipyard can read? A marker in another format is emphatically NOT
 # "no marker": release-needed.sh must refuse to publish rather than treat it as absent, because
 # treating a v1 marker as absent is exactly how a bump to v2 would republish all 14 products.
@@ -40,6 +21,37 @@ state_digest_readable() {
     v1:sha256:*) case "${1#v1:sha256:}" in ''|*[!0-9a-f]*) return 1;; *) return 0;; esac ;;
     *) return 1 ;;
   esac
+}
+
+# The state marker recorded in a release body or a notes file: "ModernMavericks-State: <value>"
+# (spec 2026-09-12, decision 2). Reads a body on STDIN; prints one marker's value, or nothing.
+#
+# ONE reader for the family, because two readers disagreeing is a live hazard rather than a style
+# point. release-needed.sh once recognised only `ModernMavericks-State: v1:sha256:<hex>` while
+# release-state-record.sh took anything after the key, so a body carrying an older-format marker was
+# "no digest recorded" to the first and "a CONFLICTING digest" to the second -- and per ruling 1 the
+# second exits 3 and fails the job. After the format bump the spec promises is safe ("recompute,
+# never republish"), every migrated repo would have gone red nightly with no self-healing path.
+# Both callers had independently chosen first-wins; that agreement is now structural.
+#
+# THE FIRST READABLE MARKER WINS, and only if there is none does the first marker of any kind. Which
+# one is picked decides whether a repo can proceed at all: release-needed.sh refuses to publish while
+# the marker it reads is unreadable, so plain first-wins let an unreadable line earlier in a body
+# WEDGE a repo whose valid digest sat two lines below it. Preferring the readable one turns that from
+# a block into a tidy-up.
+# Trailing whitespace is not part of the value -- a body is hand-editable, and a stray space must not
+# turn a matching digest into a conflicting one.
+state_marker() {
+  _sm_all="$(sed -n 's/^ModernMavericks-State:[[:space:]]*//p' | sed 's/[[:space:]]*$//')"
+  _sm_pick=""
+  while IFS= read -r _sm_one || [ -n "$_sm_one" ]; do
+    [ -n "$_sm_one" ] || continue
+    [ -n "$_sm_pick" ] || _sm_pick="$_sm_one"
+    if state_digest_readable "$_sm_one"; then _sm_pick="$_sm_one"; break; fi
+  done <<EOF
+$_sm_all
+EOF
+  printf '%s\n' "$_sm_pick"
 }
 
 # Absolute path to the INSTALLED mavericks-shipyard scripts dir. $SHIPYARD_SCRIPTS when install@v1

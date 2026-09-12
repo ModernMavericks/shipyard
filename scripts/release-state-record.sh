@@ -30,14 +30,26 @@
 #   --tag T          the MIGRATION path: an already-published release, marked once with the digest
 #                    computed from its OWN tree (`release-state.sh --ref T`).
 #
+# ...AND ONE ESCAPE, --replace-unreadable: replace a marker that state_digest_readable REJECTS
+# instead of exiting 3. release-needed.sh answers SKIP=unreadable-marker/<tag> and tells you to
+# recompute and re-record; without this flag that instruction could not be followed. A marker BEING
+# PRESENT is the very condition that blocked publishing, so the plain append refused because of it,
+# and --digest accepts only v1:sha256:<hex> so a new-format digest could not be offered either --
+# leaving hand-editing a release body as the only real recovery, which all three of those messages
+# implicitly denied. Narrow on purpose: a READABLE digest that merely differs STILL exits 3. Two
+# declared states claiming one release is a question for a human, and "replace whatever is there"
+# would make every recorded digest overwritable by any caller.
+#
 #   usage: release-state-record.sh --notes-file F --digest v1:sha256:<hex>
 #          release-state-record.sh --tag T --digest v1:sha256:<hex> [--repo OWNER/NAME]
+#          release-state-record.sh --tag T --digest D [--replace-unreadable]
 #          release-state-record.sh --tag T --digest D --body-file F --out F   (offline; tests)
 set -eu
 SELF="$(cd "$(dirname "$0")" && pwd)"
 . "$SELF/lib.sh"                    # state_marker(): the family's ONE reader of a recorded marker
 
-TAG=""; DIGEST=""; REPO=""; BODY_FILE=""; OUT=""; NOTES_FILE=""
+TAG=""; DIGEST=""; REPO=""; BODY_FILE=""; OUT=""; NOTES_FILE=""; REPLACE_UNREADABLE=no
+REPLACED=no
 while [ $# -gt 0 ]; do
   case "$1" in
     --tag) TAG="$2"; shift 2;;
@@ -46,6 +58,7 @@ while [ $# -gt 0 ]; do
     --notes-file) NOTES_FILE="$2"; shift 2;;
     --body-file) BODY_FILE="$2"; shift 2;;
     --out) OUT="$2"; shift 2;;
+    --replace-unreadable) REPLACE_UNREADABLE=yes; shift;;
     *) echo "release-state-record: unknown option $1" >&2; exit 2;;
   esac
 done
@@ -111,11 +124,32 @@ if [ -n "$existing" ]; then
     printf 'UNCHANGED=%s\n' "$what"
     exit 0
   fi
-  echo "release-state-record: $what already records a DIFFERENT state" >&2
-  echo "    recorded: $existing" >&2
-  echo "    offered:  $DIGEST" >&2
-  echo "    two declared states cannot claim one release; nothing was written" >&2
-  exit 3
+  if [ "$REPLACE_UNREADABLE" = yes ] && ! state_digest_readable "$existing"; then
+    # The escape release-needed.sh's SKIP=unreadable-marker/<tag> tells you to take. Rewrite the
+    # marker LINE where it stands rather than stripping and re-appending, so a body whose marker is
+    # not at the end keeps its shape; every other byte is preserved as always. Any further marker
+    # lines go, because by the time we are here state_marker found no readable one anywhere, so they
+    # are all unreadable -- and leaving one behind would re-block the next lookup.
+    awk -v new="ModernMavericks-State: $DIGEST" '
+      /^ModernMavericks-State:/ { if (!seen) { print new; seen = 1 } ; next }
+      { print }
+    ' "$body" > "$work/replaced"
+    mv "$work/replaced" "$body"
+    REPLACED=yes
+  else
+    echo "release-state-record: $what already records a DIFFERENT state" >&2
+    echo "    recorded: $existing" >&2
+    echo "    offered:  $DIGEST" >&2
+    echo "    two declared states cannot claim one release; nothing was written" >&2
+    if state_digest_readable "$existing"; then
+      echo "    (both are readable digests, so this is a real disagreement -- not something" >&2
+      echo "    --replace-unreadable will resolve for you)" >&2
+    else
+      echo "    the recorded marker is not a digest this shipyard can read; to replace exactly that," >&2
+      echo "    pass --replace-unreadable" >&2
+    fi
+    exit 3
+  fi
 fi
 
 # The marker must be its own PARAGRAPH, not a line welded to the footer. Markdown joins consecutive
@@ -131,16 +165,21 @@ fi
 # when that byte IS a newline, because command substitution strips trailing newlines.
 #
 # A target with no content at all gets neither, so it does not begin with an empty line.
-if [ -s "$body" ]; then
-  [ -z "$(tail -c 1 "$body")" ] || printf '\n' >> "$body"
-  printf '\n' >> "$body"
+# Skipped entirely when --replace-unreadable already rewrote the marker in place: appending there
+# would leave the old line AND a new one, which is two markers where the whole point was one.
+if [ "$REPLACED" = no ]; then
+  if [ -s "$body" ]; then
+    [ -z "$(tail -c 1 "$body")" ] || printf '\n' >> "$body"
+    printf '\n' >> "$body"
+  fi
+  printf 'ModernMavericks-State: %s\n' "$DIGEST" >> "$body"
 fi
-printf 'ModernMavericks-State: %s\n' "$DIGEST" >> "$body"
 
 if [ -n "$NOTES_FILE" ]; then
   # In place, and only after the append succeeded: a half-written notes file would publish.
   cat "$body" > "$NOTES_FILE"
-  printf 'RECORDED=%s\n' "$NOTES_FILE"
+  if [ "$REPLACED" = yes ]; then printf 'REPLACED=%s\n' "$NOTES_FILE"
+  else printf 'RECORDED=%s\n' "$NOTES_FILE"; fi
   exit 0
 fi
 
@@ -151,4 +190,5 @@ else
   [ -z "$REPO" ] || set -- "$@" --repo "$REPO"
   gh "$@" >/dev/null
 fi
-printf 'BACKFILLED=%s\n' "$TAG"
+if [ "$REPLACED" = yes ]; then printf 'REPLACED=%s\n' "$TAG"
+else printf 'BACKFILLED=%s\n' "$TAG"; fi

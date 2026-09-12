@@ -127,9 +127,18 @@ transform_records() {
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
     tag="${line%%$TAB*}"
-    [ -n "$tag" ] || continue
     rest="${line#*$TAB}"
     [ "$rest" != "$line" ] || continue          # no TAB at all: not a record
+    # AN EMPTY TAG IS A SHAPE CHANGE, NOT AN EMPTY RELEASE. @tsv renders a null or missing field as
+    # the empty string, so a renamed `.tag_name` silently empties the tag on EVERY record -- and
+    # skipping them all answers PUBLISH, in every repo, every night. That is precisely the class of
+    # failure the `body` field already caused once, in the one field that had no shape guard.
+    [ -n "$tag" ] || {
+      echo "release-needed: a release record has no tag: the raw API shape changed under us" >&2
+      echo "    (@tsv renders a null or renamed field as empty, and dropping such records answers" >&2
+      echo "    PUBLISH). Refusing to decide." >&2
+      return 1
+    }
     draft="${rest%%$TAB*}"
     body="${rest#*$TAB}"
     [ "$body" != "$rest" ] || body=""
@@ -175,8 +184,10 @@ elif [ -n "$alien_tag" ]; then
   echo "    $alien_value" >&2
   echo "    Nothing will publish until that is recomputed, because treating it as 'no marker' is how" >&2
   echo "    a digest format bump republishes every product. Recompute it from the tag's own tree:" >&2
-  echo "        release-state.sh --ref $alien_tag" >&2
-  echo "        release-state-record.sh --tag $alien_tag --digest <that>" >&2
+  echo "        d=\"\$(release-state.sh --ref $alien_tag)\"" >&2
+  echo "        release-state-record.sh --tag $alien_tag --digest \"\$d\" --replace-unreadable" >&2
+  echo "    (--replace-unreadable is required and replaces ONLY an unreadable marker: without it the" >&2
+  echo "    re-record exits 3, because a marker being present is what blocked publishing.)" >&2
   printf 'SKIP=unreadable-marker/%s\n' "$alien_tag"
 else
   echo "release-needed: no published release realises $DIGEST; $VERSION would be published" >&2

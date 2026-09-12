@@ -81,7 +81,10 @@ jobs:
           case "$answer" in
             SKIP=unreadable-marker/*)
               echo "::warning::$answer -- recompute that release's digest from its own tree" \
-                   "(release-state.sh --ref <tag>) and record it; nothing will publish until then" ;;
+                   "(release-state.sh --ref <tag>), then re-record it: release-state-record.sh" \
+                   "--tag <tag> --digest <that> --replace-unreadable. That flag is REQUIRED --" \
+                   "without it the re-record exits 3, because a marker already being present is" \
+                   "the very thing that blocked publishing. Nothing publishes until then." ;;
           esac
 
       - name: Dispatch the release run

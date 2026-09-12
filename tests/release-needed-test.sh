@@ -189,4 +189,73 @@ out="$(MAVERICKS_RELEASES_RAW="1.2.3-mavericks.1${TAB}maybe${TAB}notes" \
 [ "$rc" != 0 ] || { echo "FAIL a malformed draft flag exited 0"; exit 1; }
 case "$out" in *PUBLISH*) echo "FAIL a malformed draft flag answered PUBLISH"; exit 1;; esac
 
+# 19. AN EMPTY TAG IS A SHAPE CHANGE TOO, and it is the dangerous one: @tsv renders a null or
+#     RENAMED field as the empty string, so `.tag_name` going away empties the tag on EVERY record.
+#     Dropping those records answers PUBLISH -- in every repo, every night -- which is exactly the
+#     failure the `body` field already caused once, in the one field that had no shape guard.
+rc=0
+out="$(MAVERICKS_RELEASES_RAW="${TAB}false${TAB}ModernMavericks-State: ${D1}" \
+  sh "$S" --digest "$D1" --version 1.2.3-mavericks.1 2>"$w/e19")" || rc=$?
+[ "$rc" != 0 ] || { echo "FAIL a record with no tag exited 0"; exit 1; }
+case "$out" in *PUBLISH*) echo "FAIL a record with no tag answered PUBLISH"; exit 1;; esac
+grep -q 'shape changed' "$w/e19" || { echo "FAIL the no-tag refusal does not say what went wrong"; exit 1; }
+
+# 20. THE WEDGE, removed: an unreadable marker ABOVE a valid one in the same body must not decide.
+#     First-marker-wins made this read as unreadable, so release-needed.sh refused to publish a state
+#     that was demonstrably already released two lines further down -- a silent failure to release,
+#     which is the other half of what this design exists to prevent.
+got="$(raw "1.2.3-mavericks.1${TAB}false${TAB}ModernMavericks-State: v0:stale\n\nnotes\n\nModernMavericks-State: ${D1}" \
+  "$D1" 9.9.9-mavericks.9)"
+[ "$got" = "SKIP=already-released/1.2.3-mavericks.1" ] \
+  || { echo "FAIL an unreadable marker above a valid one wedged the lookup: got '$got'"; exit 1; }
+# ...and with no readable marker anywhere it still blocks. "Prefer readable" must not become
+# "ignore unreadable".
+got="$(raw "1.2.3-mavericks.1${TAB}false${TAB}ModernMavericks-State: v0:a\n\nModernMavericks-State: v0:b" \
+  "$D1" 9.9.9-mavericks.9)"
+[ "$got" = "SKIP=unreadable-marker/1.2.3-mavericks.1" ] \
+  || { echo "FAIL two unreadable markers stopped blocking: got '$got'"; exit 1; }
+
+# 21. THROUGH REAL jq, WITH THE SCRIPT'S OWN FILTER, so the raw shape the cases above inject is the
+#     shape the API actually produces. Skipped where jq is absent (10.9 has none); CI has it.
+if command -v jq >/dev/null 2>&1; then
+  filter="$(sed -n "s/^ *--jq '\(.*\)'.*/\1/p" "$S")"
+  [ -n "$filter" ] || { echo "FAIL could not read the fetch's jq filter out of the script"; exit 1; }
+
+  # a. Real field names, a multi-line body with a tab in it, a draft, and a null body.
+  cat > "$w/rel.json" <<JSON
+[{"tag_name":"1.2.3-mavericks.1","draft":false,"body":"## Notes\n\n| a\tb |\n\nModernMavericks-State: $D1\n"},
+ {"tag_name":"1.2.3-mavericks.2","draft":true,"body":"ModernMavericks-State: $D2"},
+ {"tag_name":"1.2.3-mavericks.0","draft":false,"body":null}]
+JSON
+  RAWJ="$(jq -r "$filter" "$w/rel.json")"
+  got="$(MAVERICKS_RELEASES_RAW="$RAWJ" sh "$S" --digest "$D1" --version 9.9.9-mavericks.9 2>/dev/null)"
+  [ "$got" = "SKIP=already-released/1.2.3-mavericks.1" ] \
+    || { echo "FAIL real jq, real filter: got '$got'"; exit 1; }
+  got="$(MAVERICKS_RELEASES_RAW="$RAWJ" sh "$S" --digest "$D2" --version 9.9.9-mavericks.9 2>/dev/null)"
+  [ "$got" = PUBLISH ] || { echo "FAIL real jq: the draft's digest counted: got '$got'"; exit 1; }
+
+  # b. A RENAMED tag field, which is how item 19 breaks in practice: jq yields null, @tsv renders it
+  #    empty, and every release disappears.
+  cat > "$w/renamed.json" <<JSON
+[{"tagName":"1.2.3-mavericks.1","draft":false,"body":"ModernMavericks-State: $D1"}]
+JSON
+  RAWR="$(jq -r "$filter" "$w/renamed.json")"
+  rc=0
+  out="$(MAVERICKS_RELEASES_RAW="$RAWR" sh "$S" --digest "$D1" --version 1.2.3-mavericks.1 2>/dev/null)" || rc=$?
+  [ "$rc" != 0 ] || { echo "FAIL real jq, renamed tag field: exited 0"; exit 1; }
+  case "$out" in *PUBLISH*) echo "FAIL real jq, renamed tag field: answered PUBLISH"; exit 1;; esac
+
+  # c. Prose containing a literal backslash-n before the key must not FORGE a marker. @tsv escapes
+  #    `\` as well as newlines, so the tempting one-line unescape (gsub of \n alone) would turn this
+  #    into a real line break and read a digest out of a sentence.
+  cat > "$w/forge.json" <<JSON
+[{"tag_name":"9.9.9-mavericks.1","draft":false,"body":"prose saying \\\\nModernMavericks-State: $D1 inline"}]
+JSON
+  RAWF="$(jq -r "$filter" "$w/forge.json")"
+  got="$(MAVERICKS_RELEASES_RAW="$RAWF" sh "$S" --digest "$D1" --version 9.9.9-mavericks.9 2>/dev/null)"
+  [ "$got" = PUBLISH ] || { echo "FAIL prose forged a state marker: got '$got'"; exit 1; }
+else
+  echo "note: jq absent, skipping the real-jq cases"
+fi
+
 echo "PASS: release-needed"
