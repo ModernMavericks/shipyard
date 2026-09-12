@@ -87,8 +87,12 @@ jobs:
       #
       # One universal updater: a deployment floor is per-configure and arm64 has no 10.9, so it is
       # built once per arch and merged. Both builds embed Sparkle's fat framework (CMakeLists), so the
-      # only Mach-O that differs is the updater's own executable; Info.plist differs by the floor,
-      # declared. /usr/bin/clang: the Apple toolchain, whatever else the runner puts on PATH.
+      # only Mach-O that differs is the updater's own executable. NOTHING else may differ -- no
+      # --allow-differ: updater/Info.plist.in fixes LSMinimumSystemVersion at the family's floor
+      # rather than deriving it from each build's deployment target, precisely so the two plists come
+      # out byte-identical, and every other value in it is a product constant. So the merge REFUSES a
+      # divergence instead of papering over one, which is the guarantee that comment argues for.
+      # /usr/bin/clang: the Apple toolchain, whatever else the runner puts on PATH.
       - name: Build the universal updater
         run: |
           set -eu
@@ -103,7 +107,7 @@ jobs:
             --a "$RUNNER_TEMP/upd-x86_64/MavericksShipyardUpdater.app" \
             --b "$RUNNER_TEMP/upd-arm64/MavericksShipyardUpdater.app" \
             --out "$RUNNER_TEMP/MavericksShipyardUpdater.app" \
-            --allow-differ Contents/Info.plist --require-archs "x86_64 arm64"
+            --require-archs "x86_64 arm64"
           # NOT re-signed, deliberately (R-P1-22). Nothing in shipyard's build signs this app -- the
           # only `codesign` in the repo used to be right here -- so the merge breaks no bundle seal.
           # `lipo -create` copies each slice byte for byte (a slice's LC_CODE_SIGNATURE covers only

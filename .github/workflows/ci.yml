@@ -111,8 +111,9 @@ jobs:
           path: ${{ runner.temp }}/shipyard-cmake-tree.tar.gz
 
       # The same two-arch build and merge release.yml does. A deployment floor is per-configure and
-      # arm64 has no 10.9, so the updater is built once per arch and merged; Info.plist differs by the
-      # floor, declared.
+      # arm64 has no 10.9, so the updater is built once per arch and merged -- with no --allow-differ:
+      # the only thing allowed to differ between the two builds is the updater's own executable. See
+      # the longer note on the same step in release.yml.
       - name: Build the universal updater
         run: |
           set -eu
@@ -127,7 +128,7 @@ jobs:
             --a "$RUNNER_TEMP/upd-x86_64/MavericksShipyardUpdater.app" \
             --b "$RUNNER_TEMP/upd-arm64/MavericksShipyardUpdater.app" \
             --out "$RUNNER_TEMP/MavericksShipyardUpdater.app" \
-            --allow-differ Contents/Info.plist --require-archs "x86_64 arm64"
+            --require-archs "x86_64 arm64"
           # NOT re-signed: see the long note on the same step in release.yml (R-P1-22). lipo preserves
           # each slice verbatim, including the ad-hoc signature ld gives the arm64 one, and nothing in
           # shipyard's build seals this bundle, so there is nothing to re-seal -- while `--deep` would
