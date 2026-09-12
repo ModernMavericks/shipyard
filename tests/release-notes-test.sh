@@ -90,6 +90,21 @@ printf 'No upstream release notes: this repo is its own upstream.\n' > "$r/INGRE
 grep -q '^## Porthole 20260802.6$' "$r/OUT.md" || { echo "FAIL self: title"; cat "$r/OUT.md"; exit 1; }
 grep -q 'for Mavericks (' "$r/OUT.md" && { echo "FAIL self: port-shaped title"; exit 1; }
 
+# --- self-upstream: also gets the same compare-link footer everyone else gets ----------------------
+# Porthole/shipyard/magic-trackpad2 have no -mavericks axis, so SELF_UPSTREAM is decided from VER
+# alone; that must not also mean "never gets a baseline". gen() hard-codes --product/--min-os but
+# appends "$@" after them, and release-notes.sh's argument loop lets a later flag win, so this
+# overrides both to exercise the porthole (YYYYMMDD.N) tag shape through the shared fixture.
+r="$work/selfglob"; mkrepo "$r"
+( cd "$r" && git tag 20260802.4 && git tag 20260802.5 )
+gen "$r" 20260802.6 --product Porthole --min-os 10.9 >/dev/null
+grep -q '^## Porthole 20260802.6$' "$r/OUT.md" \
+  || { echo "FAIL selfglob: title"; cat "$r/OUT.md"; exit 1; }
+grep -q '^- Release of Porthole 20260802.6\.$' "$r/OUT.md" \
+  || { echo "FAIL selfglob: what-changed"; cat "$r/OUT.md"; exit 1; }
+grep -q '^\[All changes since 20260802\.5\](.*compare/20260802\.5\.\.\.20260802\.6)$' "$r/OUT.md" \
+  || { echo "FAIL selfglob: compare link missing"; cat "$r/OUT.md"; exit 1; }
+
 # --- FATAL: a new upstream whose hook is broken ----------------------------------------------------
 r="$work/badhook"; mkrepo "$r"
 printf '#!/bin/sh\nexit 1\n' > "$r/build/upstream-release-notes-url.sh"

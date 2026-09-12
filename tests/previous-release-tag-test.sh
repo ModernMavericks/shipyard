@@ -50,4 +50,35 @@ git tag 9.9p2-mavericks.4; git tag 9.9p2-mavericks.5
 out="$(sh "$S" 9.9p2-mavericks.5 '9.9p2')"
 [ "$out" = 9.9p2-mavericks.4 ] || { echo "FAIL pN baseline: got '$out'"; exit 1; }
 
+# --- self-upstream tag shapes ------------------------------------------------------------------
+# shipyard/magic-trackpad2 are vX.Y.Z; porthole is YYYYMMDD.N. Neither matches *-mavericks.*, so
+# without --glob every one of their releases reports "no baseline" and drops its compare link.
+git tag v1.0.5; git tag v1.0.191; git tag v1.0.192
+out="$(sh "$S" --glob 'v[0-9]*' v1.0.192)"
+[ "$out" = v1.0.191 ] || { echo "FAIL v-shaped newest below excluded: got '$out'"; exit 1; }
+
+# The moving major tag v1 (tagged earlier in this file, so it's already in the repo) is a real tag
+# in shipyard and must never be chosen as a baseline: a compare link against it says "everything
+# since whenever v1 last moved," which is not a release. Stripping the leading "v" before keying
+# makes v1 compare as bare "1", which orders below every real v1.0.N, so it can never win here.
+out="$(sh "$S" --glob 'v[0-9]*' v1.0.192)"
+[ "$out" = v1.0.191 ] || { echo "FAIL v-shaped v1 never wins: got '$out'"; exit 1; }
+
+git tag 20260802.4; git tag 20260802.5
+git tag feed-porthole            # not a release tag; must be ignored
+git tag backup/pre-rewrite       # not a release tag; must be ignored
+out="$(sh "$S" --glob '[0-9]*' 20260802.5)"
+[ "$out" = 20260802.4 ] || { echo "FAIL date-shaped newest: got '$out'"; exit 1; }
+
+# --glob and a positional upstream-glob fight over the same slot; silently picking one is how a
+# caller gets a baseline from a tag set it did not ask about.
+out="$(sh "$S" --glob 'v[0-9]*' v1.0.192 1.26 2>&1)" && rc=0 || rc=$?
+[ "$rc" = 2 ] || { echo "FAIL --glob/positional mutual exclusion: got exit $rc (output: $out)"; exit 1; }
+
+# Unchanged: every existing positional call still means what it meant. Fresh tags here (not reused
+# from above) so this cannot pass by accident against an already-tagged pair.
+git tag 9.9p3-mavericks.1; git tag 9.9p3-mavericks.2
+out="$(sh "$S" 9.9p3-mavericks.2)"
+[ "$out" = 9.9p3-mavericks.1 ] || { echo "FAIL positional form untouched: got '$out'"; exit 1; }
+
 echo "PASS: previous-release-tag"

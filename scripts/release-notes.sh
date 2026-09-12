@@ -64,6 +64,17 @@ UP="${VER%%-mavericks.*}"
 SELF_UPSTREAM=no
 if [ "$UP" = "$VER" ]; then SELF_UPSTREAM=yes; fi
 
+# A self-upstream product's own tag shape, derived from the tag being published rather than
+# configured per repo: the family has exactly two shapes, and a repo that grows a third gets no
+# baseline (today's behaviour) instead of a wrong one.
+SELF_GLOB=""
+if [ "$SELF_UPSTREAM" = yes ]; then
+  case "$TAG" in
+    v[0-9]*) SELF_GLOB='v[0-9]*' ;;
+    [0-9]*)  SELF_GLOB='[0-9]*' ;;
+  esac
+fi
+
 # A non-shallow checkout can still hide tags (git clone --no-tags, actions/checkout fetch-tags:
 # false): git tag --list succeeds and is simply empty, so the shallow guard above never fires. Without
 # this check that reads as "no earlier release of $UP", and a repackage (-mavericks.N, N>1) is
@@ -86,7 +97,11 @@ fi
 # that is previous-release-tag.sh itself failing (e.g. an unreadable tag list), and swallowing it here
 # is exactly the "shorter body, green run" shape this generator exists to stop: no baseline means no
 # ingredient section and no compare link, silently, for a release that may well have both.
-PREV="$(sh "$SELF/previous-release-tag.sh" "$TAG" ${LINE:+"$LINE"})" && prevrc=0 || prevrc=$?
+if [ -n "$SELF_GLOB" ]; then
+  PREV="$(sh "$SELF/previous-release-tag.sh" --glob "$SELF_GLOB" "$TAG")" && prevrc=0 || prevrc=$?
+else
+  PREV="$(sh "$SELF/previous-release-tag.sh" "$TAG" ${LINE:+"$LINE"})" && prevrc=0 || prevrc=$?
+fi
 [ "$prevrc" -eq 0 ] \
   || die "previous-release-tag.sh failed (exit $prevrc) for $TAG; cannot decide the compare baseline or whether an ingredient moved without it"
 
