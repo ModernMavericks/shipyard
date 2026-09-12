@@ -114,11 +114,23 @@ printf '\n### What changed\n' >> "$tmp"
 # "this repo has no ingredients" instead of "the pins could not be read". Neither is a repackage that
 # is allowed to ship: a repo wired to repackage on ingredient bumps whose notes cannot say which
 # ingredient moved is precisely the gap this plan closes.
-CALLER=""
-for f in "$MAVERICKS_ROOT"/.github/workflows/*.yml "$MAVERICKS_ROOT"/.github/workflows/*.yaml; do
-  [ -f "$f" ] || continue
-  grep -q 'repackage-on-ingredient-bump\.yml' "$f" 2>/dev/null && { CALLER="$f"; break; }
-done
+#
+# Discovery is a FALLBACK, not a search: the convention-named file wins outright when it exists, so a
+# workflow that merely MENTIONS the caller (a comment documenting a dispatch trigger, e.g.
+# "# Dispatched by repackage-on-ingredient-bump.yml ...") can never outrank the real caller sitting
+# right next to it, however the two sort in a directory listing. Only a repo whose caller is named
+# something else falls through to discovery at all, and there the match requires an actual `uses:`
+# line -- a mention alone is not a call.
+default_caller="$MAVERICKS_ROOT/.github/workflows/repackage-on-ingredient-bump.yml"
+if [ -f "$default_caller" ]; then
+  CALLER="$default_caller"
+else
+  CALLER=""
+  for f in "$MAVERICKS_ROOT"/.github/workflows/*.yml "$MAVERICKS_ROOT"/.github/workflows/*.yaml; do
+    [ -f "$f" ] || continue
+    grep -Eq 'uses:.*repackage-on-ingredient-bump\.yml' "$f" 2>/dev/null && { CALLER="$f"; break; }
+  done
+fi
 PINS=""
 if [ -n "$CALLER" ]; then
   PINS="$(sh "$SELF/ingredient-pins.sh" "$CALLER")" \

@@ -191,6 +191,37 @@ if gen "$r" 9.9p2-mavericks.1 >/dev/null 2>&1; then
   echo "FAIL nopins: a wired-up caller deriving zero pins should be fatal"; exit 1
 fi
 
+# --- a decoy workflow that only MENTIONS the caller must not outrank the real caller ----------------
+# release.yml sorts before repackage-on-ingredient-bump.yml in glob order, and a comment naming the
+# caller (a plausible thing to write, e.g. documenting a dispatch trigger) must not be mistaken for a
+# call to it. If it is, the real caller sitting right next to it is never consulted: either a
+# legitimate release goes FATAL (decoy paths name an untracked file -> zero pins) or, worse, it ships
+# with the WRONG ingredient section (decoy paths name a tracked file -> that file's own history is
+# reported instead of the real moved pin).
+r="$work/decoytrap"; mkrepo "$r"
+cat > "$r/.github/workflows/release.yml" <<'YML'
+# Dispatched by repackage-on-ingredient-bump.yml with local_release=true.
+on:
+  push:
+    tags:
+      - '*-mavericks.*'
+    paths:
+      - CMakeLists.txt
+jobs:
+  release:
+    uses: ./.github/workflows/publish-release.yml
+YML
+( cd "$r" && git add -A && git commit -qm "add release.yml" && git tag 9.9p2-mavericks.1 )
+printf '3.9.2\n' > "$r/components/libressl/version"
+printf 'cmake_minimum_required(VERSION 3.10)\n' > "$r/CMakeLists.txt"
+( cd "$r" && git add -A && git commit -qm "bump libressl, add CMakeLists" && git tag 9.9p2-mavericks.2 )
+gen "$r" 9.9p2-mavericks.2 >/dev/null \
+  || { echo "FAIL decoytrap: should succeed (the real caller sits right next to the decoy)"; exit 1; }
+grep -q '3.8.2 -> 3.9.2' "$r/OUT.md" \
+  || { echo "FAIL decoytrap: real moved pin (libressl) not reported -- decoy caller won"; cat "$r/OUT.md"; exit 1; }
+grep -q 'CMakeLists.txt' "$r/OUT.md" \
+  && { echo "FAIL decoytrap: decoy caller's unrelated path leaked into the ingredient section"; cat "$r/OUT.md"; exit 1; }
+
 # --- FATAL: missing required arguments -------------------------------------------------------------
 r="$work/args"; mkrepo "$r"; ( cd "$r" && git tag 9.9p2-mavericks.1 )
 if ( cd "$r" && MAVERICKS_ROOT="$r" sh "$S" --tag 9.9p2-mavericks.1 --version 9.9p2-mavericks.1 \
