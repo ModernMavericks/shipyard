@@ -23,7 +23,7 @@ pattern="*-mavericks.*"
 best_tag=""; best_key=""
 for t in $(git tag --list "$pattern"); do
   [ "$t" = "$exclude" ] && continue
-  k="$(printf '%s' "$t" | sed 's/-mavericks\./\./')"
+  k="$(comparison_key "$t")"
   numeric "$k" || continue
   if [ -z "$best_key" ] || [ "$(ver_cmp "$k" "$best_key")" = 1 ]; then best_key="$k"; best_tag="$t"; fi
 done

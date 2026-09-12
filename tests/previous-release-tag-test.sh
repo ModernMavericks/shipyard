@@ -43,4 +43,11 @@ out="$(sh "$S" 1.26.7-mavericks.1 '1.26.*')"
 out="$(sh "$S")"
 [ "$out" = 1.102.0-mavericks.10 ] || { echo "FAIL unfiltered newest: got '$out'"; exit 1; }
 
+# An openssh-shaped repo: the upstream carries a letter (9.9p2), so the comparison key must map pN
+# before ordering. This repo found NO baseline for its whole life, so every release silently omitted
+# its ingredient section.
+git tag 9.9p2-mavericks.4; git tag 9.9p2-mavericks.5
+out="$(sh "$S" 9.9p2-mavericks.5 '9.9p2')"
+[ "$out" = 9.9p2-mavericks.4 ] || { echo "FAIL pN baseline: got '$out'"; exit 1; }
+
 echo "PASS: previous-release-tag"

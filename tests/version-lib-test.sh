@@ -59,4 +59,23 @@ printf '%s\n' "$out" | grep -qx 'FULL=1.27.0-mavericks.1' || { echo "FAIL upstre
 out="$(MAVERICKS_UPSTREAM_FILE="$w/lines/127/UPSTREAM_VERSION" MAVERICKS_TAGS='1.26.5-mavericks.9' sh "$V" auto)"
 printf '%s\n' "$out" | grep -qx 'FULL=1.27.0-mavericks.1' || { echo "FAIL cross-line tag leak: $out"; exit 1; }
 
+# comparison_key(): the ONE derivation of a Sparkle-comparable key. gen_appcast.sh and
+# previous-release-tag.sh both used to carry their own, and they silently diverged when openssh's
+# "pN" rule was added to one of them -- which is why no openssh release ever found its baseline.
+. "$here/../scripts/lib.sh"
+[ "$(comparison_key 1.102.0-mavericks.4)" = 1.102.0.4 ] || { echo "FAIL key: -mavericks.N"; exit 1; }
+[ "$(comparison_key 9.9p2-mavericks.3)"   = 9.9.2.3 ]   || { echo "FAIL key: pN + N"; exit 1; }
+[ "$(comparison_key 9.9p2)"               = 9.9.2 ]     || { echo "FAIL key: bare pN"; exit 1; }
+[ "$(comparison_key 20260727-mavericks.2)" = 20260727.2 ] || { echo "FAIL key: date"; exit 1; }
+[ "$(comparison_key 1.26.8)"              = 1.26.8 ]    || { echo "FAIL key: plain semver"; exit 1; }
+numeric "$(comparison_key 9.9p2-mavericks.3)" || { echo "FAIL key: pN result must be orderable"; exit 1; }
+
+# The CMake side is a deliberate mirror (a .cmake file cannot source lib.sh), and the family rule is
+# that the two stay identical. Assert the mirror still carries both transforms, so a change here that
+# forgets MavericksSparkle.cmake fails HERE rather than as "the updater thinks it is current".
+grep -q 'string(REPLACE "-mavericks' "$here/../MavericksSparkle.cmake" \
+  || { echo "FAIL MavericksSparkle.cmake lost its -mavericks derivation"; exit 1; }
+grep -q '(\[0-9\])p(\[0-9\])' "$here/../MavericksSparkle.cmake" \
+  || { echo "FAIL MavericksSparkle.cmake lost its pN derivation"; exit 1; }
+
 echo "PASS: version-lib"

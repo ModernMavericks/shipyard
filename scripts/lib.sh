@@ -48,3 +48,21 @@ ver_cmp() {
       if(x>y){print 1; exit} if(x<y){print -1; exit} }
     print 0 }'
 }
+
+# The dotted-numeric key a Sparkle-style comparator can order, from a family version string:
+#   1.102.0-mavericks.4 -> 1.102.0.4        the packaging axis becomes a final component
+#   9.9p2-mavericks.3   -> 9.9.2.3          OpenSSH-portable's pN is MONOTONIC (p2 is newer than p1),
+#                                           so folding it is order-preserving: 9.9p2 < 9.10p1 stays
+#                                           9.9.2 < 9.10.1
+# ONE derivation for the family. gen_appcast.sh (the appcast's <sparkle:version>) and
+# previous-release-tag.sh (which release is the baseline) each carried their own, and when the pN rule
+# was added to the appcast side only, every openssh tag fell outside previous-release-tag.sh's
+# numeric() domain -- so it found no baseline, and no openssh release ever listed a moved ingredient.
+# MavericksSparkle.cmake mirrors this in CMake (it cannot source sh); tests/version-lib-test.sh
+# asserts the mirror keeps both transforms.
+#
+# A NON-monotonic suffix (-rc1, beta: the suffix means OLDER) must NOT be folded here -- 1.2.3rc1 ->
+# 1.2.3.1 would sort ABOVE 1.2.3. Leave it unmapped so callers' numeric() checks fail closed.
+comparison_key() {
+  printf '%s' "$1" | sed -e 's/-mavericks\./\./' -e 's/\([0-9]\)p\([0-9]\)/\1.\2/'
+}

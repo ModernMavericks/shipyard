@@ -107,6 +107,9 @@ if [ "${1:-}" = "--render-notes" ]; then
   exit 0
 fi
 
+SELF="$(cd "$(dirname "$0")" && pwd)"
+. "$SELF/lib.sh"          # comparison_key()
+
 [ $# -eq 6 ] || { echo "usage: gen_appcast.sh <channel-title> <version> <pkg-url> <min-os> <notes-file> <enclosure-attrs>" >&2; exit 2; }
 CHANNEL_TITLE="$1"; VER="$2"; URL="$3"; MINOS="$4"; NOTES_FILE="$5"; ENCLOSURE_ATTRS="$6"
 
@@ -115,8 +118,8 @@ CHANNEL_TITLE="$1"; VER="$2"; URL="$3"; MINOS="$4"; NOTES_FILE="$5"; ENCLOSURE_A
 # be numeric-only. Turn "-mavericks." into ".", e.g. 1.102.0-mavericks.4 -> 1.102.0.4. Also normalize an
 # OpenSSH-portable-style "pN" patch (X.YpZ, where pZ INCREASES the version) to ".N": 9.9p2 -> 9.9.2, which
 # is order-preserving (9.9p2 < 9.10p1 stays 9.9.2 < 9.10.1). The human string stays in
-# <sparkle:shortVersionString>. Must match MavericksSparkle.cmake's CFBundleVersion derivation.
-BUILD_VER=$(printf '%s' "$VER" | sed -e 's/-mavericks\./\./' -e 's/\([0-9]\)p\([0-9]\)/\1.\2/')
+# <sparkle:shortVersionString>. The derivation itself is lib.sh's comparison_key(); MavericksSparkle.cmake mirrors it.
+BUILD_VER=$(comparison_key "$VER")
 
 # Fail if the derived key is not purely dotted-numeric (X.Y.Z.N): SUStandardVersionComparator only
 # totally orders that domain, and every "update says I'm up to date" bug lived OUTSIDE it (a stray
