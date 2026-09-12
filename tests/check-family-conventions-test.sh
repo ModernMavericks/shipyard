@@ -483,8 +483,32 @@ mkrepo "$work/m15"; cp "$here/../scripts/templates/msc.sh" "$work/m15/build/msc.
 echo '# a local tweak' >> "$work/m15/build/msc.sh"
 if (cd "$work/m15" && sh "$S" >/dev/null 2>&1); then echo "FAIL 15: a drifted msc.sh should fail"; exit 1; fi
 (cd "$work/m15" && sh "$S" 2>&1 | grep -q 'canonical msc.sh') || { echo "FAIL 15: should name the canonical msc.sh"; exit 1; }
+(cd "$work/m15" && sh "$S" 2>&1 | grep -q 'a local tweak') || { echo "FAIL 15: should show the first difference"; exit 1; }
 printf '\n## Conformance deviations\n- msc-template:build/msc.sh: exercising the deviation path\n' >> "$work/m15/INGREDIENTS.md"
 (cd "$work/m15" && sh "$S" >/dev/null) || { echo "FAIL 15: a declared msc-template deviation should pass"; exit 1; }
+
+# ...and only TRACKED copies count, the same rule 7c/7d already apply: an untracked build/msc.sh in a
+# worktree (a scratch copy, a half-finished migration) is not what the repo ships, and failing on it
+# would make the gate unrunnable for the person mid-way through fixing it.
+mkrepo "$work/m15u"
+printf '# a drifted scratch copy nobody committed\n' > "$work/m15u/build/msc.sh"
+(cd "$work/m15u" && sh "$S" >/dev/null) || { echo "FAIL 15: an UNTRACKED msc.sh must not fail the gate"; exit 1; }
+(cd "$work/m15u" && git add -A) >/dev/null 2>&1
+if (cd "$work/m15u" && sh "$S" >/dev/null 2>&1); then echo "FAIL 15: ...but once committed it counts"; exit 1; fi
+
+# A MISSING template must name itself, not report every repo in the family as non-canonical: `cmp -s`
+# against a nonexistent file is "different", so a template that moved would redden all fifteen at once
+# with the real cause (shipyard's own layout changed) nowhere in the message.
+mkrepo "$work/m15t"; cp "$here/../scripts/templates/msc.sh" "$work/m15t/build/msc.sh"
+(cd "$work/m15t" && git add -A) >/dev/null 2>&1
+fake="$work/fakeshipyard"; mkdir -p "$fake"
+for g in "$here"/../scripts/*.sh; do cp "$g" "$fake/"; done
+mkdir -p "$fake/templates"   # ...but no msc.sh in it
+out="$(cd "$work/m15t" && sh "$fake/check-family-conventions.sh" 2>&1 || true)"
+printf '%s\n' "$out" | grep -q 'canonical msc.sh at' \
+  || { echo "FAIL 15: a missing template must name the template, not the repo: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'is not shipyard' \
+  && { echo "FAIL 15: a missing template must NOT be reported as the repo's msc.sh being wrong"; exit 1; }
 
 # 16. Configure/test/package with shipyard-cmake/ctest/cpack, in workflows and build scripts.
 mkrepo "$work/p16"; printf '      - run: cmake -S . -B "$RUNNER_TEMP/b"\n' >> "$work/p16/.github/workflows/release.yml"
@@ -541,5 +565,85 @@ for shape in 'v="$(cmake --version | head -1)"' '(cd sub && cmake -S . -B /tmp/b
   fi
   rm -rf "$work/p16bad"
 done
+
+# The LIMIT of "prose is not a call". This check reads lines, not shell syntax: the bare `(` and the
+# whole-comment line are the only prose it can tell apart. A quoted message or a heredoc whose text
+# contains `;`, `&&` or a backtick immediately before the command still matches -- separating those
+# from a real call needs a shell parser. Asserted here, deliberately, so the limitation is a written
+# rule rather than something a contributor rediscovers when an ordinary `usage()` block reddens a PR.
+# None of these shapes exists in the corpus today; a usage() heredoc is an ordinary thing to add.
+# lim16 <repo> <what>: the repo must fail, and fail ON CHECK 16 -- not merely fail. Several of these
+# fixtures also trip check 7d (an unignored `-B build`), so asserting "exit != 0" alone would pass
+# even if check 16 had stopped matching entirely.
+lim16() {
+  if (cd "$1" && sh "$S" >/dev/null 2>&1); then
+    echo "FAIL 16: $2 is (knowingly) still flagged -- assert it"; exit 1; fi
+  (cd "$1" && sh "$S" 2>&1 | grep -q 'runs plain cmake/ctest/cpack') \
+    || { echo "FAIL 16: $2 failed, but not on check 16 -- the assertion is not testing what it says"; exit 1; }
+}
+
+mkrepo "$work/p16lim"
+cat > "$work/p16lim/build/prose.sh" <<'SH'
+#!/bin/sh
+echo "to rebuild: cmake -S . -B /tmp/b; cmake --build /tmp/b"
+SH
+(cd "$work/p16lim" && git add -A) >/dev/null 2>&1
+lim16 "$work/p16lim" "a quoted message separated by ';'"
+
+mkrepo "$work/p16lim2"
+cat > "$work/p16lim2/build/prose.sh" <<'SH'
+#!/bin/sh
+echo "or: shipyard-cmake -S . -B /tmp/b && cmake --build /tmp/b"
+SH
+(cd "$work/p16lim2" && git add -A) >/dev/null 2>&1
+lim16 "$work/p16lim2" "a quoted message separated by '&&'"
+
+mkrepo "$work/p16lim3"
+printf '#!/bin/sh\nprintf %s\n' "'try \`cmake --version\` first\\n'" > "$work/p16lim3/build/prose.sh"
+(cd "$work/p16lim3" && git add -A) >/dev/null 2>&1
+lim16 "$work/p16lim3" "a backtick-quoted command in prose"
+
+mkrepo "$work/p16lim4"
+cat > "$work/p16lim4/build/prose.sh" <<'SH'
+#!/bin/sh
+usage() { cat <<EOF
+  cmake -S . -B build
+  cmake --build build
+EOF
+}
+SH
+(cd "$work/p16lim4" && git add -A) >/dev/null 2>&1
+lim16 "$work/p16lim4" "a usage() heredoc listing commands"
+
+# ...and the false negatives, asserted for the same reason: a path, a variable, or a prefix command
+# hides a real call from this check. Each is caught at configure time instead, where the config
+# refuses the foreign cmake by name -- so the gate is an earlier warning, not the only one.
+mkrepo "$work/p16fn"
+cat > "$work/p16fn/build/hidden.sh" <<'SH'
+#!/bin/sh
+/usr/local/bin/cmake -S . -B /tmp/b
+"$CMAKE" -S . -B /tmp/b
+sudo cmake --install /tmp/b
+env FOO=1 cmake -S . -B /tmp/b
+command cmake -S . -B /tmp/b
+xcrun cmake -S . -B /tmp/b
+time cmake -S . -B /tmp/b
+SH
+(cd "$work/p16fn" && git add -A) >/dev/null 2>&1
+(cd "$work/p16fn" && sh "$S" >/dev/null) || {
+  echo "FAIL 16: the documented false negatives must stay documented -- if one now FAILS, the comment"
+  echo "         above check 16 (and the SKILL.md row) is out of date:"
+  (cd "$work/p16fn" && sh "$S" 2>&1 | grep 'plain cmake'); exit 1; }
+
+# A step's `run:` is not necessarily a STRING: YAML reads an unquoted `run: true` as a bool, and the
+# extractor's `(st.get("run") or "").splitlines()` then dies on it -- taking the whole gate down with a
+# traceback against a repo whose only sin is an odd-looking step. Found by a check-15 fixture that
+# happened to write one.
+mkrepo "$work/p16yaml"
+printf '      - run: true\n      - run: 42\n' >> "$work/p16yaml/.github/workflows/release.yml"
+(cd "$work/p16yaml" && git add -A) >/dev/null 2>&1
+out="$(cd "$work/p16yaml" && sh "$S" 2>&1 || true)"
+printf '%s\n' "$out" | grep -qi 'Traceback' && { echo "FAIL 16: a non-string run: must not crash the gate: $out"; exit 1; }
+(cd "$work/p16yaml" && sh "$S" >/dev/null) || { echo "FAIL 16: a non-string run: should simply be skipped: $out"; exit 1; }
 
 echo "PASS: check-family-conventions"

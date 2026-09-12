@@ -502,16 +502,55 @@ done
 
 # 15. A product's msc.sh is shipyard's canonical template, byte for byte: it is the one piece a product
 # carries to find shipyard, and eleven hand-kept copies had drifted into three variants.
-for f in build/msc.sh msc.sh; do
-  [ -f "$f" ] || continue
-  deviated msc-template "$f" && continue
-  cmp -s "$f" "$SELF/templates/msc.sh" \
-    || fail "$f is not shipyard's canonical msc.sh" "copy it from shipyard: cp \"\$SHIPYARD_SCRIPTS/templates/msc.sh\" $f"
-done
+#
+# TRACKED copies only, which is check 7c/7d's lesson five checks above: what CI builds from is what is
+# committed. An untracked build/msc.sh in a developer's worktree -- a scratch copy, a half-finished
+# migration, an editor backup restored by hand -- is not what the repo ships, and failing on it would
+# make the gate unrunnable locally for exactly the person mid-way through fixing it.
+_tmpl="$SELF/templates/msc.sh"
+if [ ! -f "$_tmpl" ]; then
+  # Say this rather than compare against nothing: `cmp -s` with a missing operand is "different", so a
+  # template that MOVED would tell all fifteen repos at once that their msc.sh is not canonical -- a
+  # family-wide red with the one true cause (shipyard's own layout changed) nowhere in the message.
+  fail "cannot find shipyard's canonical msc.sh at $_tmpl — the shipyard checkout is incomplete, or the template moved" \
+       "check out the whole repo (family-conventions.yml does); if the template moved, this check must move with it"
+else
+  for f in build/msc.sh msc.sh; do
+    git ls-files --error-unmatch "$f" >/dev/null 2>&1 || continue
+    deviated msc-template "$f" && continue
+    cmp -s "$f" "$_tmpl" && continue
+    # Show the first difference. "not canonical" alone sends the reader to diff it themselves, and the
+    # answer is usually one stale line -- the sooner they see WHICH, the sooner they stop wondering
+    # whether their copy was the deliberate one. (sed adds the indent; a literal newline in a BSD sed
+    # replacement is an error, so the newline is in the format string instead.)
+    _diff="$(diff "$_tmpl" "$f" 2>/dev/null | head -6 | sed 's/^/    /')"
+    fail "$(printf '%s is not shipyard'\''s canonical msc.sh\n%s' "$f" "$_diff")" \
+         "copy it from shipyard: cp \"\$SHIPYARD_SCRIPTS/templates/msc.sh\" $f   (never edit your copy -- change the template)"
+  done
+fi
 
 # 16. Configure, test and package with shipyard-cmake / shipyard-ctest / shipyard-cpack.
 # MavericksShipyardConfig.cmake refuses any other cmake at configure time; this finds the call in a
 # PR instead. Command position only, comment lines skipped, tests/ excluded (fixtures quote commands).
+#
+# WHAT THIS IS AND IS NOT. It reads lines, not shell syntax, so be precise about the claim:
+#
+#   NOT a call (and verified so, below): a whole COMMENT line; a bare `(` before the command, which is
+#   how a script says `... || { echo "not built (cmake --build <dir>)"; }`.
+#
+#   STILL a call as far as this check is concerned, even inside quotes or a heredoc: anything with a
+#   `;`, a `&&`/`|`, or a backtick immediately before the command. So
+#   `echo "to rebuild: cmake -S . -B b; cmake --build b"` and a `usage() { cat <<EOF ... EOF }` block
+#   listing commands both FAIL. That is a real limitation, not an oversight -- distinguishing them
+#   needs a shell parser -- so it is asserted in the test suite rather than left to be rediscovered by
+#   somebody's red PR. Write such prose as a comment, or declare a shipyard-cmake-only deviation.
+#
+#   KNOWN FALSE NEGATIVES, all deliberate: a path (`/usr/local/bin/cmake`), a variable (`"$CMAKE"`),
+#   and anything behind a prefix command -- `sudo cmake`, `env FOO=1 cmake`, `command cmake`,
+#   `xcrun cmake`, `time cmake`. Widening to catch these would flag far more prose than it caught
+#   calls. All of them are backstopped at configure time, where MavericksShipyardConfig.cmake refuses
+#   the foreign cmake by name however it was spelled; this check exists to move the common case
+#   earlier, not to be the only thing standing there.
 cmdlist="$(mktemp "${TMPDIR:-/tmp}/conventions-cmds.XXXXXX")"
 TAB="$(printf '\t')"
 {
@@ -532,7 +571,13 @@ for p in sys.argv[1:]:
         for st in (job.get("steps") or []):
             if not isinstance(st, dict):
                 continue
-            for line in (st.get("run") or "").splitlines():
+            # `run:` is not necessarily a string. YAML reads an unquoted `run: true` as a BOOL, and
+            # `or ""` keeps a True -- which then has no .splitlines() and takes the whole gate down
+            # with a traceback pointing at stdin. Ask what it IS.
+            run = st.get("run")
+            if not isinstance(run, str):
+                continue
+            for line in run.splitlines():
                 print("%s\t%s" % (p, line))
 PYEOF
   fi
@@ -548,6 +593,8 @@ while IFS="$TAB" read -r f line; do
   # swift-runtime each telling a human what to run. Reading an open paren as command position puts a
   # compliant repo on the migration queue, so a subshell must announce itself some other way (a
   # `(cd x && cmake ...)` still matches, on the `&`); `$(` stays, because that IS a call.
+  # The backtick is in the class for the same reason `$(` is; it also means a prose
+  # `printf 'try `cmake --version` first'` is flagged. See the limitation note above the loop.
   printf '%s\n' "$line" | grep -Eq '(^|[;&|`]|[$]\(|[[:space:]]then|[[:space:]]do|[[:space:]]exec|^then|^do|^exec)[[:space:]]*(cmake|ctest|cpack)([[:space:]]|$)' || continue
   deviated shipyard-cmake-only "$f" && continue
   fail "$f runs plain cmake/ctest/cpack: $(printf '%s' "$line" | sed 's/^[[:space:]]*//' | cut -c1-70)" \

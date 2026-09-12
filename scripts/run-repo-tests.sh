@@ -16,8 +16,19 @@ preset="${1:-}"
 
 if [ -n "$preset" ] && [ -f CMakeLists.txt ] && grep -q 'add_test' CMakeLists.txt; then
   # shipyard-ctest, not ctest: the tree under test was configured by shipyard-cmake (the config
-  # refuses any other), so its CTestTestfiles name that cmake's own generator. The pkg puts all three
-  # on the default PATH and install@v1 installs it, so this is available wherever the runner runs.
+  # refuses any other), so its CTestTestfiles name that cmake's own generator.
+  #
+  # Guarded, because "wherever the runner runs" is not everywhere. install@v1 installs the pkg only on
+  # a macOS runner; on Linux there IS no pkg, so shipyard-ctest is simply absent -- and a bare `exec`
+  # would end the run with "shipyard-ctest: not found" and no hint that the missing thing is an
+  # install step rather than a broken test. Say which it is.
+  command -v shipyard-ctest >/dev/null 2>&1 || {
+    echo "run-repo-tests: shipyard-ctest not found, and a ctest preset ($preset) was asked for" >&2
+    echo "    the shipyard pkg provides shipyard-cmake/ctest/cpack in /usr/local/bin;" >&2
+    echo "    install@v1 installs it on a macOS runner, and there is no pkg for Linux --" >&2
+    echo "    a Linux job cannot run a shipyard-configured ctest preset" >&2
+    exit 1
+  }
   echo "run-repo-tests: shipyard-ctest --preset $preset"
   exec shipyard-ctest --preset "$preset" --output-on-failure
 fi
