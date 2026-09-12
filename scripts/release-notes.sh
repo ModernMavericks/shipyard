@@ -137,6 +137,16 @@ printf '\n### What changed\n' >> "$tmp"
 # Residual: a non-comment line that names the file without calling it (`run: echo "... .yml"`) now
 # reads as a caller. That only matters in a repo with no real caller, and is rarer than the folded
 # scalar; a silent drop on a genuinely-wired repo is the worse of the two.
+#
+# And when discovery -- only ever reached by a repo whose caller is NOT at the conventional path --
+# finds more than one candidate, it does not guess. Taking the first in glob order let an
+# earlier-sorting decoy (`- run: echo "dispatched by repackage-on-ingredient-bump.yml"`) outrank the
+# real caller and report its OWN paths as the ingredients that moved: confidently wrong notes, which
+# is the worse of the two failure shapes. Ranking candidates cannot separate them (a decoy yields
+# pins too, and a folded-scalar caller is the weaker textual match by construction), so which workflow
+# defines the ingredient set is simply ambiguous, and an ambiguous ingredient set is a gap. Gaps stop
+# the release loudly here. One candidate is unambiguous and behaves exactly as before; the
+# conventional path still short-circuits discovery entirely, so no family repo reaches this at all.
 CALLER=""
 default_caller="$MAVERICKS_ROOT/.github/workflows/repackage-on-ingredient-bump.yml"
 is_caller() {
@@ -145,10 +155,15 @@ is_caller() {
 if [ -f "$default_caller" ] && is_caller "$default_caller"; then
   CALLER="$default_caller"
 else
+  ncand=0; candidates=""
   for f in "$MAVERICKS_ROOT"/.github/workflows/*.yml "$MAVERICKS_ROOT"/.github/workflows/*.yaml; do
     [ -f "$f" ] || continue
-    is_caller "$f" && { CALLER="$f"; break; }
+    is_caller "$f" || continue
+    ncand=$((ncand + 1)); CALLER="$f"
+    candidates="${candidates:+$candidates, }$f"
   done
+  [ "$ncand" -le 1 ] \
+    || die "more than one workflow names repackage-on-ingredient-bump.yml and none of them is at the conventional path .github/workflows/repackage-on-ingredient-bump.yml, so which one defines this repo's ingredient pins is ambiguous: $candidates (rename the real caller to the conventional path, or drop the mention from the other)"
 fi
 PINS=""
 if [ -n "$CALLER" ]; then

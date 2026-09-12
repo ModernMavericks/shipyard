@@ -273,6 +273,69 @@ grep -q '### Build ingredients' "$r/OUT.md" \
 grep -q '3.8.2 -> 3.9.2' "$r/OUT.md" \
   || { echo "FAIL foldedcaller: a real libressl bump must not read as packaging-only"; cat "$r/OUT.md"; exit 1; }
 
+# --- a comment mention must not win DISCOVERY either, not just the default-path race ----------------
+# decoytrap above is guarded by two rules at once (the default-path preference AND the comment
+# filter), so deleting either one alone leaves it passing -- it proves nothing about the comment
+# filter by itself. Here there is no file at the conventional path at all, so only the comment filter
+# stands between the earlier-sorting decoy and the real caller: without it aaa-release.yml wins
+# discovery outright and the notes report ITS path instead of the libressl bump that actually moved.
+r="$work/commentonly"; mkrepo "$r"
+mv "$r/.github/workflows/repackage-on-ingredient-bump.yml" "$r/.github/workflows/renovate-repackage.yml"
+cat > "$r/.github/workflows/aaa-release.yml" <<'YML'
+# Dispatched by repackage-on-ingredient-bump.yml with local_release=true.
+on:
+  push:
+    tags:
+      - '*-mavericks.*'
+    paths:
+      - CMakeLists.txt
+jobs:
+  release:
+    uses: ./.github/workflows/publish-release.yml
+YML
+( cd "$r" && git add -A && git commit -qm "rename caller, add commenting decoy" && git tag 9.9p2-mavericks.1 )
+printf '3.9.2\n' > "$r/components/libressl/version"
+printf 'cmake_minimum_required(VERSION 3.10)\n' > "$r/CMakeLists.txt"
+( cd "$r" && git add -A && git commit -qm "bump libressl, add CMakeLists" && git tag 9.9p2-mavericks.2 )
+gen "$r" 9.9p2-mavericks.2 >/dev/null \
+  || { echo "FAIL commentonly: a comment mention is not a second caller, so discovery is unambiguous"; exit 1; }
+grep -q '3.8.2 -> 3.9.2' "$r/OUT.md" \
+  || { echo "FAIL commentonly: real moved pin not reported -- the commenting decoy won discovery"; cat "$r/OUT.md"; exit 1; }
+grep -q 'CMakeLists.txt' "$r/OUT.md" \
+  && { echo "FAIL commentonly: the decoy's unrelated path leaked into the ingredient section"; cat "$r/OUT.md"; exit 1; }
+
+# --- FATAL: discovery that finds two candidates must not guess which one owns the pins --------------
+# With no workflow at the conventional path, an earlier-sorting file naming the reusable workflow on a
+# NON-comment line is indistinguishable from the real caller by content: it yields pins of its own, and
+# a genuine caller written as a folded scalar is the weaker textual match. Picking the first in glob
+# order shipped the decoy's own file as "the ingredient that moved" and dropped the real libressl bump
+# -- confidently wrong notes. Which workflow defines the ingredient set is a gap, so it stops here.
+r="$work/twocallers"; mkrepo "$r"
+mv "$r/.github/workflows/repackage-on-ingredient-bump.yml" "$r/.github/workflows/renovate-repackage.yml"
+cat > "$r/.github/workflows/aaa-release.yml" <<'YML'
+on:
+  push:
+    paths:
+      - CMakeLists.txt
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "dispatched by repackage-on-ingredient-bump.yml"
+YML
+( cd "$r" && git add -A && git commit -qm "rename caller, add mentioning decoy" && git tag 9.9p2-mavericks.1 )
+printf '3.9.2\n' > "$r/components/libressl/version"
+printf 'cmake_minimum_required(VERSION 3.10)\n' > "$r/CMakeLists.txt"
+( cd "$r" && git add -A && git commit -qm "bump libressl, add CMakeLists" && git tag 9.9p2-mavericks.2 )
+if gen "$r" 9.9p2-mavericks.2 >/dev/null 2>&1; then
+  echo "FAIL twocallers: two discovery candidates must not be resolved by glob order"; cat "$r/OUT.md"; exit 1
+fi
+out="$(gen "$r" 9.9p2-mavericks.2 2>&1 || true)"
+printf '%s\n' "$out" | grep -q 'aaa-release.yml' \
+  || { echo "FAIL twocallers: the die must name the candidates: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'renovate-repackage.yml' \
+  || { echo "FAIL twocallers: the die must name the candidates: $out"; exit 1; }
+
 # --- FATAL: missing required arguments -------------------------------------------------------------
 r="$work/args"; mkrepo "$r"; ( cd "$r" && git tag 9.9p2-mavericks.1 )
 if ( cd "$r" && MAVERICKS_ROOT="$r" sh "$S" --tag 9.9p2-mavericks.1 --version 9.9p2-mavericks.1 \
