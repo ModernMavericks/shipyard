@@ -78,8 +78,40 @@ if [ -n "$EMIT_PRE" ]; then emit_preinstall "$EMIT_PRE"; exit 0; fi
 for f in bin/cmake bin/ctest bin/cpack; do
   [ -x "$TREE/$f" ] || { echo "package-pkg: --cmake-tree has no $f: $TREE" >&2; exit 1; }
 done
+require_only() {  # $1 = flag  $2 = dir  $3 = allowed top-level names, space-separated
+  _flag="$1"; _dir="$2"; _allowed="$3"
+  for _e in "$_dir"/* "$_dir"/.*; do
+    [ -e "$_e" ] || continue                        # an unmatched glob stays literal
+    _b="$(basename "$_e")"
+    case "$_b" in
+      .|..) continue ;;
+      ._*) continue ;;                              # stripped from the stage below, so it never ships
+    esac
+    _ok=no
+    for _a in $_allowed; do
+      if [ "$_b" = "$_a" ]; then _ok=yes; fi
+    done
+    [ "$_ok" = yes ] || {
+      echo "package-pkg: $_flag has an unexpected top-level entry: $_b" >&2
+      echo "    everything at the root of $_dir is installed into $PREFIX_DIR, and the payload is" >&2
+      echo "    specified exactly (spec 2026-09-11 decision 1): $_allowed" >&2
+      echo "    move $_dir/$_b elsewhere, or add it to the payload deliberately" >&2
+      exit 1
+    }
+  done
+}
+# Both roots BECOME the product prefix verbatim, so decision 1's enumeration of the payload is a gate
+# rather than a description: a stray shipyard-cmake-tree.tar.gz left beside the tree it was made from
+# shipped a copy of the whole payload inside the payload, and nothing complained. `man` is allowed
+# though our bootstrap does not build it: CMake installs man pages there when Sphinx is present, and a
+# doc-enabled build must not become a packaging failure.
+require_only --cmake-tree "$TREE" "bin doc man share"
 [ -f "$SPREFIX/share/cmake/MavericksShipyard/MavericksShipyardConfig.cmake" ] \
   || { echo "package-pkg: --shipyard-prefix has no share/cmake/MavericksShipyard: $SPREFIX" >&2; exit 1; }
+# Shipyard's own shape is just as fixed: every install() in CMakeLists.txt targets
+# ${CMAKE_INSTALL_DATADIR}/cmake/MavericksShipyard, so `share` is the only thing that may be there.
+# Anything else means a build dir, a source tree or a shared prefix was passed by mistake.
+require_only --shipyard-prefix "$SPREFIX" "share"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/shipyard-pkg.XXXXXX")"; trap 'rm -rf "$WORK"' EXIT
 STAGE="$WORK/stage"; SCR="$WORK/scripts"
