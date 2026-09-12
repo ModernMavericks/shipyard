@@ -105,6 +105,19 @@ grep -q '^- Release of Porthole 20260802.6\.$' "$r/OUT.md" \
 grep -q '^\[All changes since 20260802\.5\](.*compare/20260802\.5\.\.\.20260802\.6)$' "$r/OUT.md" \
   || { echo "FAIL selfglob: compare link missing"; cat "$r/OUT.md"; exit 1; }
 
+# --- self-upstream, v-shaped: the OTHER self-upstream tag shape (shipyard/magic-trackpad2) --------
+# The date-shaped case above alone leaves this branch of SELF_GLOB uncovered: deleting the v[0-9]*
+# case from release-notes.sh's SELF_GLOB derivation left the whole suite green until this was added.
+r="$work/selfvglob"; mkrepo "$r"
+( cd "$r" && git tag v0.5.1 && git tag v0.5.2 )
+gen "$r" v0.5.3 --product MagicTrackpad2 --min-os 10.9 >/dev/null
+grep -q '^## MagicTrackpad2 v0.5.3$' "$r/OUT.md" \
+  || { echo "FAIL selfvglob: title"; cat "$r/OUT.md"; exit 1; }
+grep -q '^- Release of MagicTrackpad2 v0.5.3\.$' "$r/OUT.md" \
+  || { echo "FAIL selfvglob: what-changed"; cat "$r/OUT.md"; exit 1; }
+grep -q '^\[All changes since v0\.5\.2\](.*compare/v0\.5\.2\.\.\.v0\.5\.3)$' "$r/OUT.md" \
+  || { echo "FAIL selfvglob: compare link missing"; cat "$r/OUT.md"; exit 1; }
+
 # --- FATAL: a new upstream whose hook is broken ----------------------------------------------------
 r="$work/badhook"; mkrepo "$r"
 printf '#!/bin/sh\nexit 1\n' > "$r/build/upstream-release-notes-url.sh"

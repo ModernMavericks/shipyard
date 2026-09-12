@@ -1,7 +1,7 @@
 #!/bin/sh
 # Print the newest existing release tag (<upstream>-mavericks.N), or nothing when there is none.
 # Generated release notes use it as the "changed since" baseline.
-#   usage: previous-release-tag.sh [--glob PATTERN] [tag-to-exclude] [upstream-glob]
+#   usage: previous-release-tag.sh [--tag-glob PATTERN] [tag-to-exclude] [upstream-glob]
 # The glob scopes the search to one upstream line ('1.26.*'), which a repo shipping parallel lines
 # needs: 1.26.7's notes must diff against 1.26.5, not against a 1.27.0 that shipped in between.
 # Pass the tag being published so a tag-triggered build compares against its PREDECESSOR, not itself
@@ -13,15 +13,19 @@ set -eu
 SELF="$(cd "$(dirname "$0")" && pwd)"
 . "$SELF/lib.sh"          # numeric(), ver_cmp(), comparison_key()
 
-# --glob takes the pattern VERBATIM, for a product whose releases are not <upstream>-mavericks.N:
-# shipyard and magic-trackpad2 tag vX.Y.Z, porthole tags YYYYMMDD.N. The positional upstream-glob is
-# a PREFIX ("1.26") that gets "-mavericks.*" appended, so it cannot express either shape -- which is
-# why all three shipped every release with no baseline, and therefore no compare link and no
-# ingredient section, at exit 0.
-pattern=""
+# --tag-glob (same spelling assert_appcast_upgradeable.sh already uses for this) takes the pattern
+# VERBATIM, for a product whose releases are not <upstream>-mavericks.N: shipyard and magic-trackpad2
+# tag vX.Y.Z, porthole tags YYYYMMDD.N. The positional upstream-glob is a PREFIX ("1.26") that gets
+# "-mavericks.*" appended, so it cannot express either shape -- which is why all three shipped every
+# release with no baseline, and therefore no compare link and no ingredient section, at exit 0.
+pattern=""; tag_glob=no
 while [ $# -gt 0 ]; do
   case "$1" in
-    --glob) pattern="${2:?previous-release-tag: --glob needs a pattern}"; shift 2 ;;
+    --tag-glob) pattern="${2:?previous-release-tag: --tag-glob needs a pattern}"; tag_glob=yes; shift 2 ;;
+    # An unrecognised FLAG falling through to the positional slot is how a typo (--globb) silently
+    # costs a release its compare link at exit 0 -- exactly the failure shape this generator exists
+    # to stop. Only a "-"-leading argument is rejected; a bare tag/glob positional still falls through.
+    -*) echo "previous-release-tag: unknown argument: $1" >&2; exit 2 ;;
     *) break ;;
   esac
 done
@@ -34,7 +38,7 @@ else
   # Silently ignoring one of two conflicting patterns is how a caller gets a baseline from a tag set
   # it did not ask about.
   [ -z "${2:-}" ] || {
-    echo "previous-release-tag: --glob and a positional upstream-glob are mutually exclusive" >&2
+    echo "previous-release-tag: --tag-glob and a positional upstream-glob are mutually exclusive" >&2
     exit 2
   }
 fi
@@ -45,11 +49,12 @@ fi
 best_tag=""; best_key=""
 for t in $(git tag --list "$pattern"); do
   [ "$t" = "$exclude" ] && continue
-  # A leading "v" is not part of the version. Without stripping it, numeric() rejects every vX.Y.Z
-  # tag and a v-shaped repo has no baseline however it is globbed. Harmless for -mavericks. tags,
-  # which carry no "v", and it leaves shipyard's moving "v1" tag comparing as 1 -- below every real
-  # v1.0.N, so it can never be chosen as a baseline.
-  k="$(comparison_key "${t#v}")"
+  # A leading "v" is stripped ONLY under --tag-glob (vX.Y.Z tags), exactly as
+  # assert_appcast_upgradeable.sh's --tag-glob mode does. Stripping it unconditionally is wrong: in the
+  # default -mavericks.N scope, mavericks-legacysupport carries a stray v1.5.2-mavericks.1 tag beside
+  # the real 1.5.2-mavericks.1, and stripping "v" there would let the two collide/compare as the same
+  # release, and excluding the real tag would surface the stray one as a baseline instead of "none".
+  if [ "$tag_glob" = yes ]; then k="$(comparison_key "${t#v}")"; else k="$(comparison_key "$t")"; fi
   numeric "$k" || continue
   if [ -z "$best_key" ] || [ "$(ver_cmp "$k" "$best_key")" = 1 ]; then best_key="$k"; best_tag="$t"; fi
 done

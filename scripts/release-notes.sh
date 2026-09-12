@@ -67,10 +67,17 @@ if [ "$UP" = "$VER" ]; then SELF_UPSTREAM=yes; fi
 # A self-upstream product's own tag shape, derived from the tag being published rather than
 # configured per repo: the family has exactly two shapes, and a repo that grows a third gets no
 # baseline (today's behaviour) instead of a wrong one.
+#
+# The v-shaped glob is 'v*.*.*', not 'v[0-9]*': shipyard's own release.yml already uses this spelling
+# (--tag-glob 'v*.*.*') for the same reason. Requiring three components excludes the moving major tag
+# (v1) from the tag list before it is ever compared -- v1 has no dot, so it cannot match this glob at
+# all. That is stronger than relying on ver_cmp to rank it last: with only v1 and v1.0.1 in the repo,
+# ver_cmp still puts v1 last, but the max of what remains is still v1 once v1.0.1 is excluded (the tag
+# being published), and a first v2.0.0 published against a bare "v2" alias has the same shape.
 SELF_GLOB=""
 if [ "$SELF_UPSTREAM" = yes ]; then
   case "$TAG" in
-    v[0-9]*) SELF_GLOB='v[0-9]*' ;;
+    v[0-9]*) SELF_GLOB='v*.*.*' ;;
     [0-9]*)  SELF_GLOB='[0-9]*' ;;
   esac
 fi
@@ -98,7 +105,7 @@ fi
 # is exactly the "shorter body, green run" shape this generator exists to stop: no baseline means no
 # ingredient section and no compare link, silently, for a release that may well have both.
 if [ -n "$SELF_GLOB" ]; then
-  PREV="$(sh "$SELF/previous-release-tag.sh" --glob "$SELF_GLOB" "$TAG")" && prevrc=0 || prevrc=$?
+  PREV="$(sh "$SELF/previous-release-tag.sh" --tag-glob "$SELF_GLOB" "$TAG")" && prevrc=0 || prevrc=$?
 else
   PREV="$(sh "$SELF/previous-release-tag.sh" "$TAG" ${LINE:+"$LINE"})" && prevrc=0 || prevrc=$?
 fi
