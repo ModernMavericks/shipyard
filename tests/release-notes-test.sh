@@ -336,6 +336,27 @@ printf '%s\n' "$out" | grep -q 'aaa-release.yml' \
 printf '%s\n' "$out" | grep -q 'renovate-repackage.yml' \
   || { echo "FAIL twocallers: the die must name the candidates: $out"; exit 1; }
 
+# --- a release that is BOTH a new upstream AND an ingredient repackage: both sections must appear,
+# with the upstream content FIRST. Neither existing case covers this: `new` above is a first release
+# with no baseline (so no ingredient diff is even possible), and `ing` above is a same-upstream
+# repackage that explicitly asserts NO upstream claim. A real release can be both at once (a new
+# upstream tarball that also bumps a vendored ingredient in the same cut), and nothing else here
+# exercises that combination or its ordering.
+r="$work/combo"; mkrepo "$r"
+( cd "$r" && git tag 9.9p1-mavericks.1 )                       # baseline: a DIFFERENT upstream (9.9p1)
+printf '3.9.2\n' > "$r/components/libressl/version"            # an ingredient pin moves too
+( cd "$r" && git commit -qam "bump libressl" && git tag 9.9p2-mavericks.1 )  # this cut ships new upstream 9.9p2
+gen "$r" 9.9p2-mavericks.1 >/dev/null
+grep -q 'New upstream: OpenSSH 9.9p2 (was 9.9p1)' "$r/OUT.md" \
+  || { echo "FAIL combo: missing new-upstream bullet"; cat "$r/OUT.md"; exit 1; }
+grep -q '### Build ingredients' "$r/OUT.md" \
+  || { echo "FAIL combo: missing ingredient section"; cat "$r/OUT.md"; exit 1; }
+grep -q '3.8.2 -> 3.9.2' "$r/OUT.md" || { echo "FAIL combo: pin delta missing"; cat "$r/OUT.md"; exit 1; }
+u="$(grep -n 'New upstream:' "$r/OUT.md" | cut -d: -f1)"
+i="$(grep -n '### Build ingredients' "$r/OUT.md" | cut -d: -f1)"
+[ -n "$u" ] && [ -n "$i" ] && [ "$u" -lt "$i" ] \
+  || { echo "FAIL combo: upstream content should precede ingredients"; cat "$r/OUT.md"; exit 1; }
+
 # --- FATAL: missing required arguments -------------------------------------------------------------
 r="$work/args"; mkrepo "$r"; ( cd "$r" && git tag 9.9p2-mavericks.1 )
 if ( cd "$r" && MAVERICKS_ROOT="$r" sh "$S" --tag 9.9p2-mavericks.1 --version 9.9p2-mavericks.1 \
