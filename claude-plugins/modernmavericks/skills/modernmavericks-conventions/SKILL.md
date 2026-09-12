@@ -643,11 +643,20 @@ its `main` — in the left column, that push is a release.
   self-upstream product that is its own upstream). `--min-os` emits the install-floor line — omit it
   for a product that is not a 10.9 `.pkg`. `--line` scopes the baseline for a repo shipping parallel
   lines (golang's `1.26`); it is normalized internally, so both `1.26` and `1.26.*` work.
+  `release-notes-file.sh` forwards it too, from `MAVERICKS_NOTES_LINE` in the environment (its
+  positional signature stays `<TAG> <FULL_VERSION> [PRODUCT_NAME]`, so a line can't be a new argument).
+  The generator `cd`s to the repo root before it runs, so **`--out` resolves against the repo root**,
+  not the caller's cwd — a relative path from a subdirectory (a `build/` step, say) will not land where
+  you typed it; pass an absolute path or one rooted at `$MAVERICKS_ROOT` from anywhere but the root.
 - **The shape, in order:** title, the committed `release-notes/<TAG>.md` prose verbatim when present,
   `### What changed`, `### Build ingredients` when a pin moved, then a footer (the floor line, a
   compare link). Prose stays optional and is never rewritten; a release with none still says what
   changed — `release-notes-file.sh` is now a thin back-compat wrapper onto the generator, so the six
-  repos still calling its old signature get the standard body before they migrate.
+  repos still calling its old signature get the standard body before they migrate. **Committed prose
+  must NOT carry its own `## ` title** — the generator emits the title itself and slots the prose
+  verbatim right after it, so a note beginning with `##` produces two titles (golang's committed notes
+  do this today; the family's per-repo `release-notes/README.md` files still describe the old
+  convention where the note supplied its own title — a later plan updates them).
 - **Every gap is FATAL, and names its cause.** Notes used to be prose that must never fail a release,
   so every generated fragment was appended with `|| true` and `2>/dev/null` — which meant a broken
   hook, an unreadable pin, or a shallow checkout produced a *shorter* body and a green run. openssh
