@@ -10,11 +10,13 @@
 #
 # TWO TARGETS, ONE APPEND RULE:
 #   --notes-file F   the NORMAL path: a notes file, in place, BEFORE packaging. The appcast's
-#                    <description> and the Release body both come from that one file, and the
-#                    family's artifact conformance compares them byte for byte -- so a marker added
-#                    later (at publish time) would fail it, correctly: a 10.9 user's update dialog
-#                    would be missing a line the Release page shows. No --tag: the notes are not a
-#                    release yet, and inventing a tag argument would invite passing the wrong one.
+#                    <description> and the Release body both come from that one file, so writing the
+#                    marker before packaging keeps them in agreement -- a conformance check that
+#                    asserts this equality is in flight in the release-notes work, not enforced today.
+#                    The reason stands regardless: a 10.9 user's Sparkle update dialog should show the
+#                    same notes the Release page shows, and a marker added later (at publish time)
+#                    would leave it one line short of that. No --tag: the notes are not a release yet,
+#                    and inventing a tag argument would invite passing the wrong one.
 #   --tag T          the BACKFILL path: an already-published release, for releases that predate this
 #                    design (spec 2026-09-12, failure modes).
 #

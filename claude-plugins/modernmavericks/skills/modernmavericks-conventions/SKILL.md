@@ -594,19 +594,26 @@ which is why publishing is idempotent rather than triggered.
   **One list**: this section is authoritative for release identity, and is deliberately a SUBSET of
   the file's prose table above it, which documents everything baked in — including things that must
   never cut a release (bats; an SDK pinned by hash that will never move). `scripts/declared-state.sh`
-  parses it and documents the grammar. Inside the section, un-bulleted prose is ignored, but a line
-  that starts `- ` is always parsed as an entry — so an explanatory aside there must not start with a
-  dash, or it reads as a malformed declaration (deliberate: a typo'd entry and a bulleted note are
-  textually indistinguishable, and silently ignoring the shape that looks like an entry would swallow
-  real typos in the file that decides what gets published).
+  parses it and documents the grammar. Inside the section, un-bulleted prose is ignored — and so is a
+  dash-line with no colon, skipped by that same rule. But a dash-line that DOES contain a colon is
+  parsed as an entry, the text before the colon its name and the rest its path: if the name doesn't
+  look canonical, the parser rejects it and `release-state.sh` fails loudly, naming the entry; if the
+  name looks canonical but the "path" resolves to nothing, `release-state.sh` still fails loudly,
+  naming the file it couldn't read. The failure mode that matters is the one that ISN'T loud: if the
+  text after the colon happens to name a file that exists, the digest silently gains an entry nobody
+  intended. So explanatory text in this section must never start with a dash — not because a dash
+  always reads as an entry, but because when it does, the failure can be the silent kind this whole
+  design exists to prevent.
 - **`sh "$SHIPYARD_SCRIPTS/release-state.sh" [--root DIR] [--render]` renders the declaration
   canonically and hashes it** → `v1:sha256:<hex>` (`--render` prints the canonical bytes instead, for
   debugging and the golden test). `release-state-record.sh --notes-file dist/RELEASE_NOTES.md
   --digest "$(...)"` writes `ModernMavericks-State: v1:sha256:<hex>` into the notes file **before
-  `sign_and_appcast.sh` runs — never at publish time.** That one file becomes both the Sparkle
-  appcast `<description>` and the GitHub Release body, and the family's artifact conformance compares
-  them byte for byte, so a marker added later fails it, correctly: a 10.9 user's update dialog would
-  be missing a line the Release page shows. `release-needed.sh --digest D --version V [--repo R]`
+  `sign_and_appcast.sh` runs — never at publish time.** That one file is rendered into both the
+  Sparkle appcast `<description>` and the GitHub Release body, so writing the marker before packaging
+  keeps them in agreement — a conformance check asserting that equality is in flight in the
+  release-notes work, not something this design can lean on today. The reason stands regardless: a
+  10.9 user's Sparkle update dialog should show the same notes the Release page shows, and a marker
+  added later would leave it one line short of that. `release-needed.sh --digest D --version V [--repo R]`
   answers whether that state is already out — `PUBLISH`, `SKIP=already-released/<tag>`, or
   `SKIP=already-released/<tag> BACKFILL=<tag>` for a pre-migration release that carries no digest yet.
   `release-state-record.sh --tag T --digest D [--repo R]` backfills one. `reconcile.yml` is the
