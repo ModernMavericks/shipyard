@@ -28,10 +28,23 @@ esac
 
 # The title must name THIS version. A copied file under a new tag is otherwise invisible: every other
 # check passes, and the release announces its predecessor.
-case "$first" in
-  *"$ver"*) ;;
-  *) fail "the title does not name $ver: $first" ;;
-esac
+#
+# A leading "v" is not part of the version -- shipyard's tag is v1.0.209 but its generated title reads
+# "## Shipyard 1.0.209", same as previous-release-tag.sh already strips "v" before keying and
+# comparison_key() already treats the dotted-numeric part as the version. Accept either spelling of
+# the version this check was CALLED with; a stale one (a copied file's own predecessor) still fails,
+# whether or not it carries the same "v".
+#
+# Guarded with [ -n "$bare" ]: a glob alternative built from an empty string, `*""*`, matches ANY
+# string in every shell tested here -- so a degenerate "v" version would silently turn this whole
+# check into a no-op instead of failing loudly. Never let a derived pattern go untested for empty.
+named=false
+case "$first" in *"$ver"*) named=true ;; esac
+bare="${ver#v}"
+if [ "$named" = false ] && [ -n "$bare" ] && [ "$bare" != "$ver" ]; then
+  case "$first" in *"$bare"*) named=true ;; esac
+fi
+[ "$named" = true ] || fail "the title does not name $ver: $first"
 
 grep -q '^### What changed[[:space:]]*$' "$f" \
   || fail "$f has no '### What changed' section; every release says what changed, even a repackage"

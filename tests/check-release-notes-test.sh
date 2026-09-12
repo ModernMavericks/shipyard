@@ -49,6 +49,41 @@ no '## OpenSSH 9.9p2 for Mavericks (9.9p2-mavericks.5)
 - Repackage.
 ' 9.9p2-mavericks.6 "stale version in title" "9.9p2-mavericks.6"
 
+# a leading "v" is not part of the version: shipyard's tag is v1.0.209, but its generated title has no
+# "v" (release.yml calls release-notes.sh with --tag "v$v" --version "$v", so the title is built from
+# the bare "$v"). previous-release-tag.sh already strips "v" before keying, for the same reason -- "v"
+# and bare are one version spelled two ways, not two versions.
+ok '## Shipyard 1.0.209
+
+### What changed
+- Release of Shipyard 1.0.209.
+' v1.0.209 "title bare, checked version v-prefixed"
+
+# ...but a version that genuinely differs must still fail, "v" or not -- the copied-file case this
+# check exists for.
+no '## Shipyard 1.0.209
+
+### What changed
+- Release of Shipyard 1.0.209.
+' v1.0.208 "stale version, v-prefixed check version" "v1.0.208"
+
+# a degenerate version of literally "v" strips to an empty "bare" -- if that empty string were used
+# in a case glob alternative unguarded, `*""*` matches ANY string in every shell tested, silently
+# turning the whole title check into a no-op. It must still fail like any other title that doesn't
+# name the version being checked.
+no '## Something Unrelated
+
+### What changed
+- Whatever.
+' v "degenerate version \"v\" must not match every title" "does not name v"
+
+# unchanged: a version that never carries a "v" on either side behaves exactly as before
+ok '## OpenSSH 9.9p2 for Mavericks (9.9p2-mavericks.6)
+
+### What changed
+- Repackage.
+' 9.9p2-mavericks.6 "no leading v anywhere, unaffected"
+
 # today's most common body: no What changed at all
 no '## Mavericks OpenSSH 9.9p2 (9.9p2-mavericks.6)
 
