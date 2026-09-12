@@ -128,6 +128,33 @@ jobs:
       # it, because to a tag-reading world it did not exist. Between attempts every draft of THIS tag is
       # deleted (delete-draft-release.sh touches nothing published and nothing of another tag), and if
       # the last attempt fails too, the draft goes with it and the error says what to do.
+      - name: A first release needs a README a human has read
+        env:
+          REPO: ${{ github.repository }}
+          SHA: ${{ inputs.target-commitish || github.sha }}
+        run: |
+          set -eu
+          # Only the FIRST release is gated: a repo that has published before has a README somebody
+          # shipped. "Has published before" is read as "has any tag", using the same trick as the
+          # step above -- ask the caller's remote by URL. This job checks out shipyard, never the
+          # calling repo, so there is no origin here and no working tree to inspect. Every family
+          # repo is public, so this needs no token.
+          if [ -n "$(git ls-remote --tags "https://github.com/$REPO" 2>/dev/null | head -n 1)" ]; then
+            echo "$REPO has released before -- the first-release README gate does not apply"
+            exit 0
+          fi
+          # Fetch the README AT THE COMMIT BEING RELEASED, not at the default branch's head: the
+          # release is cut from target_commitish, and that is the README the release will be read
+          # beside. A missing README is the script's to refuse, so an empty fetch still runs it.
+          url="https://raw.githubusercontent.com/$REPO/$SHA/README.md"
+          if curl -fsSL "$url" -o first-release-readme.md; then
+            :
+          else
+            echo "::error::could not fetch $url -- refusing to publish a first release without seeing its README."
+            exit 1
+          fi
+          sh .shipyard/scripts/check-readme-reviewed.sh first-release-readme.md
+
       - name: Publish
         id: publish1
         continue-on-error: true

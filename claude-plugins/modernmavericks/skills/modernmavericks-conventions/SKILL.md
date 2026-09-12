@@ -678,6 +678,24 @@ which is why publishing is idempotent rather than triggered.
     uses: ModernMavericks/shipyard/.github/workflows/publish-release.yml@v1
     with: { version: "${{ needs.build.outputs.version }}", artifact: <artifact name> }
   ```
+- **A repo's FIRST EVER release needs a README a human has read.** `publish-release.yml` refuses it
+  while the README still carries the generated marker line — plain visible prose under the heading,
+  not an HTML comment, so it renders on the repo's front page:
+  ```markdown
+  # <project>
+
+  **This README has not been read or edited by a human yet.** Until it has, this project cannot cut
+  its first release.
+  ```
+  A new repo ships that line; a human reads the README, makes it say what the project is, and
+  deletes it. The gate keys on the substring `not been read or edited by a human`, so the wording
+  around it is yours. Only the first release is gated — "has released before" is read as "has any
+  tag" — because a repo that has published has a README somebody shipped. Nothing inspects git
+  authorship: it cannot tell a human's edit from an assistant committing a human's words, and the
+  publish job has no checkout of your repo to inspect anyway. The point is narrow and worth it — the
+  README is the page every visitor lands on, and nobody reads their own front door until something
+  makes them.
+
 - Put the assets **and** `RELEASE_NOTES.md` in that artifact. The workflow regenerates `SHA256SUMS`
   (so drop any local `shasum` step), uses the notes as the Release body, and **fails if the notes are
   missing or empty**. An empty body is not a degraded release, it is the defect this removes: tailscale
