@@ -46,24 +46,30 @@ ra = [i for i, c in enumerate(cmds) if ".shipyard/scripts/release-assets.sh" in 
 if not ra:
     fail("the assets step no longer calls .shipyard/scripts/release-assets.sh")
 
-crn = [i for i, c in enumerate(cmds)
-       if re.search(r'\.shipyard/scripts/check-release-notes\.sh\s+"?dist/\$NOTES"?\s+"?\$VERSION"?', c)]
+# The call, and nothing chained onto it. A first cut at this check enumerated specific silencers
+# (|| true, || :, ; true, continue-on-error: true) -- and a re-review walked straight past that list:
+# || echo skipped, || exit 0 (which also skips the checksum verification below, by exiting the whole
+# run: block), || logger x, && true, a pipe into cat, all leave a disabled gate looking green. Rather
+# than keep enumerating spellings, require the STRUCTURE: the line that calls check-release-notes.sh
+# must be the whole command -- nothing before it, nothing chained after it with ||, &&, ;, or a pipe.
+# Any fallback of any spelling, thought of or not, then fails this instead of passing it.
+call_re = re.compile(r'sh \.shipyard/scripts/check-release-notes\.sh "?dist/\$NOTES"? "?\$VERSION"?')
+crn = [i for i, c in enumerate(cmds) if call_re.fullmatch(c)]
 if not crn:
+    decorated = [c for c in cmds if call_re.search(c)]
+    if decorated:
+        fail("check-release-notes.sh is called, but not as a standalone command -- "
+             "something is chained onto it (||, &&, ;, a pipe, ...), so a refused body can still ship: %r" % decorated[0])
     fail('the assets step does not call .shipyard/scripts/check-release-notes.sh on "dist/$NOTES" "$VERSION" -- '
          "a copied notes file under a new tag would pass every other check and announce its predecessor")
 
-crn_line = cmds[crn[0]]
+# A structurally-clean call line can still run under a disabled errexit set earlier in the SAME step --
+# `set +e` neuters the call without touching the call's own line at all, so the line check above cannot
+# see it. Nothing between the step's start and the call may turn -e off.
+if any(re.match(r"^set\b", c) and "+e" in c for c in cmds[:crn[0]]):
+    fail("the assets step disables errexit (set +e) before calling check-release-notes.sh -- "
+         "its failure would then not stop the step, so a refused body can still ship")
 
-# A call that is wired in but neutered validates nothing while looking green. This is the likeliest
-# regression this file will ever see: someone holding a finished, signed build the publisher just
-# refused reaches for `|| true` to unblock it. Plan 1 existed to delete exactly this kind of silencer
-# (`|| true` and `2>/dev/null`) from the notes path -- openssh never listed an ingredient and
-# signal-desktop shipped a new upstream with no link because of it -- so this enforcement step is the
-# one place that regression is least excusable.
-if re.search(r"\|\|\s*(true|:)\s*(;|$)", crn_line):
-    fail("check-release-notes.sh is neutered with || true/|| : -- a refused body would still ship")
-if re.search(r";\s*true\s*$", crn_line):
-    fail("check-release-notes.sh is neutered with a trailing ; true -- a refused body would still ship")
 if str(a.get("continue-on-error", "")).strip().lower() == "true":
     fail("the assets step is continue-on-error: true -- check-release-notes.sh failing would not fail the job")
 
