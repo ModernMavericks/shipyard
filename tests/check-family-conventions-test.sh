@@ -6,6 +6,10 @@ S="$here/../scripts/check-family-conventions.sh"
 work="$(mktemp -d "${TMPDIR:-/tmp}/family-conventions.XXXXXX")"; trap 'rm -rf "$work"' EXIT  # template: 10.9 BSD mktemp requires one
 
 mkrepo() {  # $1 = dir
+  # The baseline is a repo that satisfies EVERY check, so each case below can turn exactly one thing
+  # off. Since check 14 the release body has to come from the shared generator, so the baseline calls
+  # release-notes.sh and hands the publisher the very path it was given as --out; a fixture that
+  # still hand-waved `--notes-file "$NOTES"` would fail 14 in thirty unrelated cases.
   mkdir -p "$1/.github/workflows" "$1/tests"
   cat > "$1/.github/workflows/release.yml" <<'YML'
 name: release
@@ -19,7 +23,10 @@ jobs:
   build:
     steps:
       - run: sh "$SHIPYARD_SCRIPTS/run-repo-tests.sh"
-      - run: gh release create "$TAG" dist/* --notes-file "$NOTES"
+      - run: |
+          sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$TAG" --version "$FULL" \
+            --product Widget --min-os 10.9.5 --out dist/RELEASE_NOTES.md
+      - run: gh release create "$TAG" dist/* --notes-file dist/RELEASE_NOTES.md
 YML
   printf '# Build ingredients\n' > "$1/INGREDIENTS.md"
   printf '{"extends":["github>ModernMavericks/shipyard"]}\n' > "$1/.github/renovate.json"
@@ -164,7 +171,7 @@ mkrepo "$work/p"
 python3 - "$work/p/.github/workflows/release.yml" <<'PY'
 import sys
 p=sys.argv[1]; s=open(p).read()
-s=s.replace('      - run: gh release create "$TAG" dist/* --notes-file "$NOTES"\n',
+s=s.replace('      - run: gh release create "$TAG" dist/* --notes-file dist/RELEASE_NOTES.md\n',
             '  publish:\n'
             '    uses: ModernMavericks/shipyard/.github/workflows/publish-release.yml@v1\n'
             '    with: { version: "1.0.0", artifact: pkg }\n')
@@ -446,6 +453,160 @@ printf '%s\n' '{"extends":["github>ModernMavericks/shipyard"],"customManagers":[
   > "$work/mv3/.github/renovate.json"
 (cd "$work/mv3" && git add -A) >/dev/null 2>&1
 (cd "$work/mv3" && sh "$S" >/dev/null) || { echo "FAIL a non-mavericks pin should pass"; exit 1; }
+
+# 14. The release body comes from the shared generator, and every consumer reads that same file.
+# Before Plan 2 six products published "Automated release for Mac OS X 10.9 (Mavericks)." as their
+# entire notes and tailscale published an empty body; all 13 now call release-notes.sh. Check 5 only
+# asks whether SOME notes reached the release, which --generate-notes and a printf redirect both
+# satisfy. This is the strong form, and it fails on the PR rather than at release time.
+#
+# mkrepo's baseline already IS the compliant shape (generator --out dist/RELEASE_NOTES.md, publisher
+# --notes-file dist/RELEASE_NOTES.md), so `mkrepo` alone covers the passing case; each fixture below
+# breaks exactly one thing.
+
+# no generator at all: a repo that publishes some body, but not this family's
+mkrepo "$work/g1"
+grep -v 'release-notes\.sh' "$work/ok/.github/workflows/release.yml" > "$work/g1/.github/workflows/release.yml"
+if out="$(cd "$work/g1" && sh "$S" 2>&1)"; then echo "FAIL a repo with no generator call should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'release-notes.sh' || { echo "FAIL should name the generator: $out"; exit 1; }
+
+# ...and check-release-notes.sh is the PUBLISHER's shape gate, a different script. A substring match
+# on "release-notes.sh" would let a repo that only runs the shape gate pass while writing no body.
+mkrepo "$work/g1b"
+sed -e 's|sh "$SHIPYARD_SCRIPTS/release-notes\.sh" .*|sh "$SHIPYARD_SCRIPTS/check-release-notes.sh" dist/RELEASE_NOTES.md|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g1b/.github/workflows/release.yml"
+if out="$(cd "$work/g1b" && sh "$S" 2>&1)"; then echo "FAIL check-release-notes.sh must not count as the generator"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'no workflow builds the release body' || { echo "FAIL should fail for the missing generator, not something else: $out"; exit 1; }
+
+# a hand-written body: the exact regression this check exists for, in the printf-redirect shape
+mkrepo "$work/g2"
+sed -e 's|sh "$SHIPYARD_SCRIPTS/release-notes\.sh" .*|printf "## %s\\n\\nAutomated release.\\n" "$FULL" > dist/RELEASE_NOTES.md|' \
+  -e '/--product Widget --min-os/d' "$work/ok/.github/workflows/release.yml" > "$work/g2/.github/workflows/release.yml"
+if out="$(cd "$work/g2" && sh "$S" 2>&1)"; then echo "FAIL a hand-written body should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'hand-writes the release body' || { echo "FAIL should say it is hand-written: $out"; exit 1; }
+
+# ...and in the copy-a-committed-file shape (porthole shipped its README.md as the body of every
+# release). The generator call stays, so this is caught by the redirect/cp clause and nothing else.
+mkrepo "$work/g3"
+cat >> "$work/g3/.github/workflows/release.yml" <<'YML'
+      - run: cp release-notes/README.md dist/RELEASE_NOTES.md
+YML
+if out="$(cd "$work/g3" && sh "$S" 2>&1)"; then echo "FAIL copying a committed file in as the body should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'hand-writes the release body' || { echo "FAIL should say it is hand-written: $out"; exit 1; }
+
+# ...and in the directory that is NOT dist/. magic-trackpad2 stages its body at build/RELEASE_NOTES.md,
+# so a hand-write check anchored on dist/ passes every test above while leaving the one repo that uses
+# another directory completely uncovered -- which is what a mutation run found here. The directory is
+# the caller's business; the FILE is what only the generator may write.
+mkrepo "$work/g3b"
+cat >> "$work/g3b/.github/workflows/release.yml" <<'YML'
+      - run: printf '## %s\n\nAutomated release.\n' "$FULL" > build/RELEASE_NOTES.md
+YML
+if out="$(cd "$work/g3b" && sh "$S" 2>&1)"; then echo "FAIL a hand-written body outside dist/ should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'hand-writes the release body' || { echo "FAIL should say it is hand-written: $out"; exit 1; }
+
+# ...but COPYING the generated body somewhere else is reading it, not writing it. A repo staging the
+# file into an artifact does exactly this, and flagging it would fail a correct repo.
+mkrepo "$work/g3c"
+cat >> "$work/g3c/.github/workflows/release.yml" <<'YML'
+      - run: cp dist/RELEASE_NOTES.md "$RUNNER_TEMP/keep.md"
+YML
+(cd "$work/g3c" && sh "$S" >/dev/null) || { echo "FAIL copying the generated body OUT must not be read as hand-writing it"; exit 1; }
+
+# GitHub's autogenerated notes are a commit list, not the Sparkle <description> a 10.9 user reads.
+# It satisfies check 5, which is exactly why 14 has to reject it by name.
+mkrepo "$work/g4"
+cat >> "$work/g4/.github/workflows/release.yml" <<'YML'
+      - run: gh release create "$TAG" --generate-notes
+YML
+if out="$(cd "$work/g4" && sh "$S" 2>&1)"; then echo "FAIL --generate-notes should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -qi 'autogenerated' || { echo "FAIL should name the autogenerated body: $out"; exit 1; }
+
+# the appcast must read the file the generator wrote, or the Release page and the update dialog tell
+# two different stories
+mkrepo "$work/g5"
+sed 's|--notes-file dist/RELEASE_NOTES\.md|--notes-file release-notes/README.md|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g5/.github/workflows/release.yml"
+if out="$(cd "$work/g5" && sh "$S" 2>&1)"; then echo "FAIL a notes file the generator never wrote should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'the generator does not write' || { echo "FAIL should say the generator does not write it: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'release-notes/README.md' || { echo "FAIL should name the offending path: $out"; exit 1; }
+
+# --- and now the four shapes the REAL repos use, each of which a plausible check gets wrong --------
+
+# magic-trackpad2 stages its body at build/RELEASE_NOTES.md and QUOTES the value. A check anchored on
+# dist/ fails it; a character class that excludes the quote captures an EMPTY value and fails it too
+# (and swift-runtime, which quotes a dist/ path).
+mkrepo "$work/g6"
+sed -e 's|--out dist/RELEASE_NOTES\.md|--out build/RELEASE_NOTES.md|' \
+    -e 's|--notes-file dist/RELEASE_NOTES\.md|--notes-file "build/RELEASE_NOTES.md"|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g6/.github/workflows/release.yml"
+(cd "$work/g6" && sh "$S" >/dev/null) || { echo "FAIL a quoted build/ notes path should pass"; exit 1; }
+
+# ...and the quote must actually be STRIPPED, not merely survived. A pattern that excludes the quote
+# from the value captures an EMPTY string, which word-splits away to nothing and leaves the subset
+# loop with no members at all -- so the case above would keep passing for entirely the wrong reason,
+# with the comparison silently switched off for the two repos that quote. A mutation run found this.
+# A WRONG quoted path is what tells the two apart.
+mkrepo "$work/g6b"
+sed 's|--notes-file dist/RELEASE_NOTES\.md|--notes-file "release-notes/README.md"|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g6b/.github/workflows/release.yml"
+if out="$(cd "$work/g6b" && sh "$S" 2>&1)"; then echo "FAIL a quoted notes path the generator never wrote should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'release-notes/README.md' || { echo "FAIL should name the unquoted path: $out"; exit 1; }
+
+# --out is not release-notes.sh's flag alone: container-tools and tailscale pass --out "$PKG" to
+# cmake/package_pkg.sh. That must not make "$PKG" an acceptable --notes-file.
+mkrepo "$work/g7"
+cat >> "$work/g7/.github/workflows/release.yml" <<'YML'
+      - run: sh cmake/package_pkg.sh --out "$PKG" --version "$VER"
+YML
+(cd "$work/g7" && sh "$S" >/dev/null) || { echo "FAIL a packaging step's --out must not fail the repo"; exit 1; }
+mkrepo "$work/g7b"
+cat >> "$work/g7b/.github/workflows/release.yml" <<'YML'
+      - run: sh cmake/package_pkg.sh --out "$PKG" --version "$VER"
+      - run: sh "$SHIPYARD_SCRIPTS/gen_appcast.sh" --notes-file "$PKG"
+YML
+if (cd "$work/g7b" && sh "$S" >/dev/null 2>&1); then echo "FAIL a packaging --out must not vouch for a non-.md notes file"; exit 1; fi
+
+# 1password, ed25519, signal-desktop and swift-toolchain pass no --notes-file at all: they stage no
+# appcast from the notes. The subset loop is then empty, which is correct and not a gap.
+mkrepo "$work/g8"
+grep -v 'notes-file' "$work/ok/.github/workflows/release.yml" > "$work/g8/.github/workflows/release.yml"
+cat >> "$work/g8/.github/workflows/release.yml" <<'YML'
+  publish:
+    uses: ModernMavericks/shipyard/.github/workflows/publish-release.yml@v1
+YML
+(cd "$work/g8" && sh "$S" >/dev/null) || { echo "FAIL a repo that stages no appcast from the notes should pass"; exit 1; }
+
+# porthole's feed-porthole moving-tag release passes a bare --notes "<text>" to gh release. That is a
+# feed pointer, not a product release body, and failing it would redden a correct repo. golang does
+# the same for each go-line feed.
+mkrepo "$work/g9"
+cat >> "$work/g9/.github/workflows/release.yml" <<'YML'
+      - run: |
+          gh release create feed-porthole --title 'Porthole appcast' \
+            --notes "Sparkle appcast for Porthole; asset replaced every release, tag never moves."
+YML
+(cd "$work/g9" && sh "$S" >/dev/null) || { echo "FAIL a bare --notes on a moving-tag feed release must not fail"; exit 1; }
+
+# golang renders TWO appcasts from one body. The comparison is between SETS, so the same path read
+# twice is one member, not a duplicate to complain about.
+mkrepo "$work/g10"
+cat >> "$work/g10/.github/workflows/release.yml" <<'YML'
+      - run: |
+          sh "$SHIPYARD_SCRIPTS/gen_appcast.sh" --notes-file dist/RELEASE_NOTES.md --out-x dist/x.xml
+          sh "$SHIPYARD_SCRIPTS/gen_appcast.sh" --notes-file dist/RELEASE_NOTES.md --out-n dist/n.xml
+YML
+(cd "$work/g10" && sh "$S" >/dev/null) || { echo "FAIL two appcasts from one body should pass"; exit 1; }
+
+# A check-14 failure must ACCUMULATE like every other, not abort the run: this gate reports all its
+# failures at once, and a check 14 that killed the script under set -eu would take the "ok" guard and
+# any future check 15 with it. So a repo that breaks 14 AND an earlier check must report both.
+mkrepo "$work/g11"; rm -f "$work/g11/INGREDIENTS.md"
+sed 's|--notes-file dist/RELEASE_NOTES\.md|--notes-file release-notes/README.md|' \
+  "$work/ok/.github/workflows/release.yml" > "$work/g11/.github/workflows/release.yml"
+out="$(cd "$work/g11" && sh "$S" 2>&1 || true)"
+printf '%s\n' "$out" | grep -q 'INGREDIENTS.md' || { echo "FAIL check 3 should still be reported: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'the generator does not write' || { echo "FAIL check 14 should still be reported: $out"; exit 1; }
 
 # A failing run must NOT also print "ok". The success line used to sit mid-script, so checks appended
 # after it (7, 8, 9) printed "check-family-conventions: ok" and THEN failed -- the exact "output says
