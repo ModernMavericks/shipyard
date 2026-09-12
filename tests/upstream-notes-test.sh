@@ -123,7 +123,7 @@ mk_repo_with_hook "$u2" '#!/bin/sh
 exit 0'
 rm "$u2/build/upstream-release-notes-url.sh"
 ( cd "$u2" && git tag 1.2.3-mavericks.1 )
-( cd "$u2" && MAVERICKS_ROOT="$u2" sh "$S" --url-only 1.2.3-mavericks.1 >/dev/null 2>&1 ); rc=$?
+( cd "$u2" && MAVERICKS_ROOT="$u2" sh "$S" --url-only 1.2.3-mavericks.1 >/dev/null 2>&1 ) && rc=0 || rc=$?
 [ "$rc" = 4 ] || { echo "FAIL --url-only no hook: rc=$rc"; exit 1; }
 
 # a hook that prints junk -> exit 5 (NOT 0: a broken link must be distinguishable from no link)
@@ -131,11 +131,30 @@ u3="$work/u-junk"
 mk_repo_with_hook "$u3" '#!/bin/sh
 echo not-a-url'
 ( cd "$u3" && git tag 1.2.3-mavericks.1 )
-( cd "$u3" && MAVERICKS_ROOT="$u3" sh "$S" --url-only 1.2.3-mavericks.1 >/dev/null 2>&1 ); rc=$?
+( cd "$u3" && MAVERICKS_ROOT="$u3" sh "$S" --url-only 1.2.3-mavericks.1 >/dev/null 2>&1 ) && rc=0 || rc=$?
 [ "$rc" = 5 ] || { echo "FAIL --url-only junk hook: rc=$rc"; exit 1; }
 
 # the DEFAULT mode is unchanged: section or nothing, always 0
 out="$(cd "$u3" && MAVERICKS_ROOT="$u3" sh "$S" 1.2.3-mavericks.1 2>/dev/null)" && rc=0 || rc=$?
 [ "$rc" = 0 ] && [ -z "$out" ] || { echo "FAIL default mode changed: rc=$rc out='$out'"; exit 1; }
+
+# a shallow clone hides the tags: an unknown tag list must NOT read as "no earlier release" (that
+# is exactly how a repackage gets called new). --url-only cannot honestly report "no link due" over
+# an unknown tag list, so it must bail 5; default mode still prints nothing and exits 0 -- the mode
+# split IS the point signal-desktop's incident turned on, so both halves need to be proven together.
+u4="$work/u-shallow-src"
+mk_repo_with_hook "$u4" '#!/bin/sh
+printf "https://example.com/notes/%s\n" "$1"'
+( cd "$u4" && git tag 1.2.3-mavericks.1 && git commit -q --allow-empty -m later )
+u4s="$work/u-shallow"
+git clone -q --depth 1 "file://$u4" "$u4s"
+[ -z "$(git -C "$u4s" tag)" ] || { echo "FAIL fixture: shallow clone carried tags"; exit 1; }
+mkdir -p "$u4s/build"; cp "$u4/build/upstream-release-notes-url.sh" "$u4s/build/"
+
+( cd "$u4s" && MAVERICKS_ROOT="$u4s" sh "$S" --url-only 1.2.3-mavericks.1 >/dev/null 2>&1 ) && rc=0 || rc=$?
+[ "$rc" = 5 ] || { echo "FAIL --url-only shallow clone: rc=$rc"; exit 1; }
+
+out="$(cd "$u4s" && MAVERICKS_ROOT="$u4s" sh "$S" 1.2.3-mavericks.1 2>/dev/null)" && rc=0 || rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] || { echo "FAIL default mode shallow clone changed: rc=$rc out='$out'"; exit 1; }
 
 echo "PASS: upstream-notes"
