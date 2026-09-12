@@ -82,11 +82,20 @@ jobs:
         env:
           NOTES: ${{ inputs.notes-file }}
           CHECKSUMS: ${{ inputs.checksums }}
+          VERSION: ${{ inputs.version }}
         run: |
           set -eu
           # Fails loudly when the notes are missing or empty -- publishing is where the notes promise
           # is kept, so an empty body stops the release rather than shipping quietly.
           files="$(sh .shipyard/scripts/release-assets.sh dist "$NOTES")"
+          # release-assets.sh proves the file EXISTS and is non-empty. This proves it is a release
+          # body: a title naming this exact version, a "### What changed" section, no empty section.
+          # The conventions gate (check-family-conventions.sh clause 14) checks a repo's wiring on its
+          # PR; this is the one point every release passes through -- a hand-tagged release, a
+          # re-dispatch of an old build, a repo that never had the gate -- so a body that regressed
+          # after that PR still cannot ship. It also catches the invisible case: a notes file copied
+          # under a new tag, which passes every other check and announces its predecessor.
+          sh .shipyard/scripts/check-release-notes.sh "dist/$NOTES" "$VERSION"
           if [ "$CHECKSUMS" = true ]; then
             ( cd dist && printf '%s\n' "$files" | sed 's|^dist/||' | xargs shasum -a 256 > SHA256SUMS )
             # Verify what we just wrote. Generating a checksum file and publishing it unread means the
