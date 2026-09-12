@@ -132,17 +132,33 @@ jobs:
         env:
           REPO: ${{ github.repository }}
           SHA: ${{ inputs.target-commitish || github.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           # Only the FIRST release is gated: a repo that has published before has a README somebody
-          # shipped. "Has published before" is read as "has any tag", using the same trick as the
-          # step above -- ask the caller's remote by URL. This job checks out shipyard, never the
-          # calling repo, so there is no origin here and no working tree to inspect. Every family
-          # repo is public, so this needs no token.
-          if [ -n "$(git ls-remote --tags "https://github.com/$REPO" 2>/dev/null | head -n 1)" ]; then
-            echo "$REPO has released before -- the first-release README gate does not apply"
-            exit 0
-          fi
+          # shipped. "Has published before" means it HAS A RELEASE -- ask the Releases API, not the
+          # tag list. An earlier version of this step tested "does any tag exist", and that is wrong
+          # in a way that fails open: a repo carrying an unrelated tag -- a `backup/*` from a rebase,
+          # an annotation, anything a human pushed once -- would look like it had already published
+          # and the gate would silently switch itself off, which is the worst behaviour available to
+          # a guard. Three such tags were found sitting in one family checkout.
+          #
+          # This job checks out shipyard, never the calling repo, so there is no working tree to
+          # inspect. GH_TOKEN is the job's own token: the API read would work unauthenticated on a
+          # public repo, but runners share outbound IPs and the unauthenticated limit is 60/hour,
+          # so an authenticated read is the difference between a guard and a coin flip.
+          n="$(gh api "repos/$REPO/releases?per_page=1" --jq 'length' 2>/dev/null || echo FAILED)"
+          case "$n" in
+            0) : ;;   # never released -- the gate applies
+            FAILED)
+              echo "::error::could not read releases for $REPO -- refusing to publish without knowing whether this is its first release."
+              exit 1
+              ;;
+            *)
+              echo "$REPO has released before -- the first-release README gate does not apply"
+              exit 0
+              ;;
+          esac
           # Fetch the README AT THE COMMIT BEING RELEASED, not at the default branch's head: the
           # release is cut from target_commitish, and that is the README the release will be read
           # beside. A missing README is the script's to refuse, so an empty fetch still runs it.
