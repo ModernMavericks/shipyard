@@ -473,4 +473,34 @@ r="$work/withfooter"; mkrepo "$r"
 gen "$r" 9.9p2-mavericks.1 >/dev/null
 grep -q -- '^---$' "$r/OUT.md" || { echo "FAIL G3: footer rule missing when a floor line applies"; cat "$r/OUT.md"; exit 1; }
 
+# --- FATAL: a --line glob that matches no tag would silently ship a repackage short -----------------
+# "126" is the shape a human reaches for (it's golang's own product id, GO_LINE) but the line glob is a
+# PREFIX of the real tags (1.26.7-mavericks.N), so it must be "1.26" -- "126" matches nothing. The
+# existing "no visible tags" guard above only checks $UP-mavericks.* (1.26.7-mavericks.*, which this
+# fixture's own tag satisfies), so it does not cover this: LINE is the one input it never looks at.
+# Without this check PREV comes back empty, the ingredient section and compare link both vanish, and
+# the release ships shorter than the truth at exit 0.
+r="$work/linefatal"; mkrepo "$r"
+( cd "$r" && git tag 1.26.7-mavericks.1 )
+if gen "$r" 1.26.7-mavericks.2 --product Go --line 126 --min-os 10.9.5 >/dev/null 2>&1; then
+  echo "FAIL linefatal: --line matching no tag must be fatal for a repackage"; exit 1
+fi
+out="$(gen "$r" 1.26.7-mavericks.2 --product Go --line 126 --min-os 10.9.5 2>&1 || true)"
+printf '%s\n' "$out" | grep -q 'matches no' \
+  || { echo "FAIL linefatal: error must name the unmatched line glob: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q '1\.26' \
+  || { echo "FAIL linefatal: error must show the shape the tags actually carry: $out"; exit 1; }
+
+# ...and the correct prefix still works, on the same fixture.
+gen "$r" 1.26.7-mavericks.2 --product Go --line 1.26 --min-os 10.9.5 >/dev/null
+grep -q 'compare/1\.26\.7-mavericks\.1\.\.\.1\.26\.7-mavericks\.2' "$r/OUT.md" \
+  || { echo "FAIL linefatal: a correct --line still yields a compare link"; cat "$r/OUT.md"; exit 1; }
+
+# N=1 is a genuine first release of a line and has no baseline, so an unmatched --line must NOT be
+# fatal for it -- that IS what a first release of a new line looks like.
+r="$work/linefatal-first"; mkrepo "$r"
+gen "$r" 1.27.0-mavericks.1 --product Go --line 1.27 --min-os 10.9.5 >/dev/null
+grep -q '^## Go 1.27.0 for Mavericks' "$r/OUT.md" \
+  || { echo "FAIL linefatal-first: first release of a line still generates"; cat "$r/OUT.md"; exit 1; }
+
 echo "PASS: release-notes"

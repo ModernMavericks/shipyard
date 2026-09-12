@@ -112,6 +112,18 @@ fi
 [ "$prevrc" -eq 0 ] \
   || die "previous-release-tag.sh failed (exit $prevrc) for $TAG; cannot decide the compare baseline or whether an ingredient moved without it"
 
+# An unmatched --line is indistinguishable from "no earlier release" at this point, and the result is
+# a repackage published with no ingredient section and no compare link, green. The tags carry the
+# upstream's own dotted prefix (1.26.7-mavericks.N), so the glob must be "1.26" -- "126" is the shape
+# a human reaches for and it matches nothing. N=1 is left alone: the first release of a new line
+# genuinely has no baseline.
+if [ -n "$LINE" ] && [ -z "$PREV" ] && [ "$SELF_UPSTREAM" = no ]; then
+  case "${VER##*-mavericks.}" in
+    1) ;;
+    *) die "--line matches no ${LINE}-mavericks.* tag, so $VER (a repackage) would ship with no compare link and no ingredient section; pass the prefix the tags actually carry (1.26, not 126)" ;;
+  esac
+fi
+
 tmp="$(mktemp "${TMPDIR:-/tmp}/release-notes.XXXXXX")"
 footer_tmp="$(mktemp "${TMPDIR:-/tmp}/release-notes-footer.XXXXXX")"
 trap 'rm -f "$tmp" "$footer_tmp"' EXIT
