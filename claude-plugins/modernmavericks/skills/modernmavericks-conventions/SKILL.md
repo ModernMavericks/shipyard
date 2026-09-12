@@ -652,9 +652,10 @@ its `main` — in the left column, that push is a release.
   back-compat wrapper (positional `<TAG> <FULL_VERSION> [PRODUCT_NAME]`, `MAVERICKS_NOTES_LINE`
   forwarded to `--line`) specifically so the repos still on the old signature would get the standard
   body before each migrated. The per-repo migration (2026-09-12) converted every remaining caller to
-  the direct form above; a repo-wide grep across all 13 product repos plus shipyard finds zero
-  references to `release-notes-file.sh` left. It is not deleted — that is a separate decision — but a
-  new or copied workflow that calls it is drift, not precedent: write the direct call instead.
+  the direct form above; a repo-wide grep across all 13 product repos finds zero callers of
+  `release-notes-file.sh` left (shipyard itself still references it — the script, its test, and this
+  doc — since it is not deleted; that is a separate decision). But a new or copied workflow that
+  calls it is drift, not precedent: write the direct call instead.
 - **macho-tools is deliberately out of scope for this migration.** It has no release infrastructure at
   all (no `release.yml`, no `.pkg`, no updater) to point at the generator; its own plan needs
   correcting before any release-notes work applies to it.
@@ -696,8 +697,8 @@ its `main` — in the left column, that push is a release.
   | `--min-os` passed | Repos |
   |---|---|
   | `10.9` (bare) | 1password, signal-desktop, porthole |
-  | `10.9.5` | openssh, container-tools, clang, golang, macports-legacy-support, ed25519, tailscale, swift-runtime, magic-trackpad2 |
-  | *(omitted)* — no floored end-user `.pkg` | swift-toolchain, shipyard |
+  | `10.9.5` | openssh, container-tools, clang, golang, macports-legacy-support, ed25519, tailscale, swift-runtime, magic-trackpad2, shipyard |
+  | *(omitted)* — no floored end-user `.pkg` | swift-toolchain |
 
   **Dual-variant repos (clang, golang): the notes' floor line describes the NATIVE `.pkg`, while each
   appcast enforces its own artifact's real minimum — this split is deliberate, do not "fix" it.** Both
@@ -746,14 +747,15 @@ its `main` — in the left column, that push is a release.
     `### Build ingredients` section, even where a real one exists: porthole has four Renovate-tracked
     ingredient pins (skalibs, s6, the Debian base image, xpra — see its `INGREDIENTS.md`) that its own
     generated notes can therefore never name.
-  - swift-runtime's `build.sh` carries three pins that used to be literal `KEY=VALUE` lines and are
-    now DERIVED expressions (`SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"`, and the
-    `BUILDSUPPORT_ASSET` / `TOOLCHAIN_ASSET` filenames built from the same pins). The literal-only
-    per-key diff (see "Say which ingredient moved" above) correctly excludes them going forward, but
-    reads their disappearance from the literal form as *removed* rather than as "never a literal to
-    begin with" — three stale "removed" bullets. Same defect family as the `pins.env` false-positive
-    above (a content-shape the sniffer doesn't yet recognize), left untouched here because it
-    under-reports rather than over-claims, which is the lower-severity direction of that bug class.
+  - swift-runtime's `build.sh` carries one pin, `SWIFT_TAG`, that used to be a literal `KEY=VALUE`
+    line and is now a DERIVED expression (`SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"`). The
+    literal-only per-key diff (see "Say which ingredient moved" above) correctly excludes it going
+    forward, but reads its disappearance from the literal form as *removed* rather than as "never a
+    literal to begin with" — one stale "removed" bullet. (`BUILDSUPPORT_ASSET` / `TOOLCHAIN_ASSET`
+    are unaffected: both were already derived expressions before this change, so neither was ever
+    reported as removed.) Same defect family as the `pins.env` false-positive above (a content-shape
+    the sniffer doesn't yet recognize), left untouched here because it under-reports rather than
+    over-claims, which is the lower-severity direction of that bug class.
 - **Every gap is FATAL, and names its cause.** Notes used to be prose that must never fail a release,
   so every generated fragment was appended with `|| true` and `2>/dev/null` — which meant a broken
   hook, an unreadable pin, or a shallow checkout produced a *shorter* body and a green run. openssh
@@ -1259,10 +1261,10 @@ it here.** A silently dropped increment is how the family drifted in the first p
       (shipyard, porthole, magic-trackpad2) from a compare link and a `### Build ingredients` section
       — deferred during the per-repo migration; named here so it is findable (Release notes,
       "Deliberately deferred")
-- [ ] swift-runtime's `build.sh` has three pins (`SWIFT_TAG`, `BUILDSUPPORT_ASSET`,
-      `TOOLCHAIN_ASSET`) that read as falsely *removed* now that they are derived expressions rather
-      than literals — same defect family as the `pins.env` false-positive fixed in this migration
-      (`f54a0cd`), left alone because it under-reports rather than over-claims
+- [ ] swift-runtime's `build.sh` has one pin (`SWIFT_TAG`) that reads as falsely *removed* now that
+      it is a derived expression rather than a literal — same defect family as the `pins.env`
+      false-positive fixed in this migration (`f54a0cd`), left alone because it under-reports rather
+      than over-claims
 - [ ] **North star, not yet designed:** should a product repo carry build machinery at all? One
       declarative config per repo (upstream, verification, binaries, ingredients, updater) that
       shipyard turns into the build, package, release, and checks — a repo that cannot express a
