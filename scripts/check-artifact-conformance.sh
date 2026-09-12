@@ -15,8 +15,8 @@
 #   pkg        <file> <version> <floor> <identifier>      one per shipped .pkg
 #   appcast    <file> <version> <enclosure> <length>      one per Sparkle appcast
 #   asset      <file> <bytes>                             one per file that will be published
-#   notes-render <notes-file> <sha256>                     digest of gen_appcast.sh --render-notes
-#   appcast-notes <appcast-file> [<sha256>]                digest of the appcast's <description> CDATA
+#   notes-render <notes-file> <sha256>                    digest of gen_appcast.sh --render-notes
+#   appcast-notes <appcast-file> [<sha256>]               digest of the appcast's <description> CDATA
 #   deviation  <check> <reason...>                        a declared, reasoned departure
 #
 # Facts rather than files so the agreement logic is testable without fabricating real .pkg files;
@@ -124,20 +124,48 @@ done < "$facts"
 # They are built from the same dist/RELEASE_NOTES.md today, which is what makes this assertion cheap --
 # and what makes it worth having, because nothing else would notice the day that stops being true. A
 # 10.9 user deciding whether to take an update reads the appcast; a maintainer reads the Release page.
-# An appcast fact with no notes-render to compare against is left alone: a repo that does not stage a
-# notes file into dist/ is caught by release-assets.sh at publish time, not here.
+#
+# Say what was compared, mirroring the ingredients check below: an "ok" that also means "there was
+# nothing to look at" is a check nobody can trust the day the coupling actually breaks -- which is
+# exactly how the ingredients check nearly went unnoticed once already.
+#
+# A missing notes-render fact is NOT quietly skipped when an appcast-notes fact exists: the notes
+# file's basename is a per-repo INPUT (release-assets.sh's --notes-file defaults to RELEASE_NOTES.md
+# but is not required to be it), while artifact-facts.sh's RELEASE_NOTES.md case matches only that
+# default. A product staging its body under any other name would otherwise get a green run with this
+# entire layer silently switched off -- an appcast carrying a description with nothing to compare it
+# against is the same "records stopped shipping" shape the ingredients check refuses to pass through
+# in silence, so this fails outright rather than merely announcing itself. (A repo with NO appcast at
+# all, and so no appcast-notes fact either, has nothing to compare either way -- that is fine.)
 render="$(sed -n 's/^notes-render [^ ]* \(..*\)$/\1/p' "$facts" | head -1)"
+appcast_notes="$(grep '^appcast-notes ' "$facts" || true)"
 if [ -n "$render" ]; then
+  compared=0
   while read -r _ file digest; do
     [ -n "$file" ] || continue
+    compared=$((compared + 1))
     if [ -z "$digest" ]; then
       fail notes "$file carries no <description>; that is what a 10.9 user reads in the update dialog" "$file"
     elif [ "$digest" != "$render" ]; then
       fail notes "$file's <description> is not the release body; Sparkle users and the Release page would read different notes" "$file"
     fi
   done <<EOF
-$(grep '^appcast-notes ' "$facts" || true)
+$appcast_notes
 EOF
+  if [ "$compared" -gt 0 ]; then
+    echo "conformance: notes: compared $compared appcast description(s) against the rendered release body"
+  else
+    echo "conformance: notes: no appcast in this release (nothing to compare)"
+  fi
+elif [ -n "$appcast_notes" ]; then
+  while read -r _ file _digest; do
+    [ -n "$file" ] || continue
+    fail notes "$file carries a description, but no notes-render fact exists to compare it against -- the notes file may be staged under a name this check does not recognize" "$file"
+  done <<EOF
+$appcast_notes
+EOF
+else
+  echo "conformance: notes: no notes file staged (nothing to compare)"
 fi
 
 # --- SIBLINGS: where a repo ships parallel upstream lines, the line IS the product -----------------

@@ -87,8 +87,17 @@ for f in "$dist"/*; do
       # fragment, and comparing markdown to HTML would need a second renderer that could disagree
       # with the real one. gen_appcast.sh --render-notes IS the real one (that is what the seam is
       # for), so the two sides of this comparison cannot drift apart the way two parsers would.
-      printf 'notes-render %s %s\n' "$b" \
-        "$(sh "$(dirname "$0")/gen_appcast.sh" --render-notes "$f" | shasum -a 256 | cut -d' ' -f1)"
+      #
+      # Captured, not piped straight into shasum: a pipeline's exit status is its LAST command's, so
+      # `render-notes | shasum` would let a renderer failure (gen_appcast.sh refuses empty notes, for
+      # instance) print nothing on stdout, run under set -eu without tripping it, and silently digest
+      # to sha256-of-empty -- one of two ways this comparison could pass by both sides being broken
+      # the same way. Check success and non-emptiness explicitly before digesting.
+      render="$(sh "$(dirname "$0")/gen_appcast.sh" --render-notes "$f")" \
+        || { echo "artifact-facts: gen_appcast.sh --render-notes failed for $b" >&2; exit 1; }
+      [ -n "$render" ] \
+        || { echo "artifact-facts: gen_appcast.sh --render-notes produced no output for $b" >&2; exit 1; }
+      printf 'notes-render %s %s\n' "$b" "$(printf '%s\n' "$render" | shasum -a 256 | cut -d' ' -f1)"
       ;;
     build-info*)
       # What this variant was built FROM (see build-info.sh). One fact per key so the checker can
