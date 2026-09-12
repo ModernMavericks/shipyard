@@ -24,6 +24,8 @@
 #          release-state-record.sh --tag T --digest v1:sha256:<hex> [--repo OWNER/NAME]
 #          release-state-record.sh --tag T --digest D --body-file F --out F   (offline; tests)
 set -eu
+SELF="$(cd "$(dirname "$0")" && pwd)"
+. "$SELF/lib.sh"                    # state_marker(): the family's ONE reader of a recorded marker
 
 TAG=""; DIGEST=""; REPO=""; BODY_FILE=""; OUT=""; NOTES_FILE=""
 while [ $# -gt 0 ]; do
@@ -88,7 +90,10 @@ else
   what="$TAG"
 fi
 
-existing="$(sed -n 's/^ModernMavericks-State:[[:space:]]*//p' "$body" | head -1)"
+# What counts as a recorded marker is lib.sh's business, not this script's: release-needed.sh reads
+# the same bodies, and when the two rules differed a marker in an older format was "nothing recorded"
+# to that script and "a CONFLICTING record" to this one -- exit 3, nightly, forever.
+existing="$(state_marker < "$body")"
 if [ -n "$existing" ]; then
   if [ "$existing" = "$DIGEST" ]; then
     # Nothing to write, so nothing is written -- not even a byte-identical rewrite of the target.
