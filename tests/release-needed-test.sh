@@ -1,10 +1,12 @@
 #!/bin/sh
 # release-needed.sh: has this declared state already been released?
 #
-# The third case matters most. Every release published BEFORE this design carries no digest at all. A
-# naive lookup finds none, says PUBLISH, and cuts a duplicate -- in 14 repos, unattended, on the
-# first night the backstop runs. The version-equality fallback is what prevents that, and it is also
-# what makes a digest format bump safe.
+# The four version/digest QUADRANTS are the cases that matter, and writing them down is what would
+# have caught ruling 16's defect. The answer must depend on the digest and never on the version:
+# version.sh's `auto` mode maps every declared state of a given upstream to ONE version, so "a
+# release exists for this version" does not mean "a release exists for this state". An earlier cut
+# inferred exactly that, and then backfilled the digest onto the release it had guessed -- losing an
+# unreleased ingredient bump silently and permanently.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/release-needed.sh"
@@ -31,11 +33,25 @@ got="$(run "" "$D1" 1.2.3-mavericks.1)"
 got="$(run "1.2.3-mavericks.1${TAB}${D1}" "$D1" 1.2.3-mavericks.1)"
 [ "$got" = "SKIP=already-released/1.2.3-mavericks.1" ] || { echo "FAIL digest hit: got '$got'"; exit 1; }
 
-# 3. THE MIGRATION CASE: a release exists for this version but carries no digest -> skip AND ask for
-#    a backfill. Publishing here would duplicate a release that is already out.
+# 3. THE QUADRANT THAT PROVES THE RULING: a release exists for this very VERSION but carries no
+#    digest -> PUBLISH. Inferring "already released" here is what lost a release. An unreleased
+#    ingredient bump gets `version.sh auto`'s existing tag, so this shape is not the pre-migration
+#    past OR a released state -- it is both, indistinguishably, which is why the version cannot
+#    decide. A repo whose existing release really is this state is marked once, at migration, with
+#    the digest computed from that tag's own tree (release-state.sh --ref).
 got="$(run "1.2.3-mavericks.1${TAB}" "$D1" 1.2.3-mavericks.1)"
-[ "$got" = "SKIP=already-released/1.2.3-mavericks.1 BACKFILL=1.2.3-mavericks.1" ] \
-  || { echo "FAIL pre-migration fallback: got '$got'"; exit 1; }
+[ "$got" = PUBLISH ] || { echo "FAIL a digest-less release for this version decided: got '$got'"; exit 1; }
+
+# 3b. The same version with a DIFFERENT, readable digest is an earlier state of it, and blocks
+#     nothing: the state changed, the version did not, and the state is what a release realises.
+got="$(run "1.2.3-mavericks.1${TAB}${D2}" "$D1" 1.2.3-mavericks.1)"
+[ "$got" = PUBLISH ] || { echo "FAIL same version, different digest: got '$got'"; exit 1; }
+
+# 3c. ...and the fourth quadrant: a different version carrying THIS digest is already released.
+#     (Case 5 below is the same property stated the other way round.)
+got="$(run "1.2.3-mavericks.4${TAB}${D1}" "$D1" 1.2.3-mavericks.1)"
+[ "$got" = "SKIP=already-released/1.2.3-mavericks.4" ] \
+  || { echo "FAIL different version, this digest: got '$got'"; exit 1; }
 
 # 4. An ordinary ingredient bump: a release exists with a different digest and a different version.
 got="$(run "1.2.3-mavericks.1${TAB}${D1}" "$D2" 1.2.3-mavericks.2)"
@@ -46,9 +62,24 @@ got="$(run "1.2.3-mavericks.1${TAB}${D1}" "$D2" 1.2.3-mavericks.2)"
 got="$(run "9.9.9-mavericks.7${TAB}${D1}" "$D1" 1.2.3-mavericks.1)"
 [ "$got" = "SKIP=already-released/9.9.9-mavericks.7" ] || { echo "FAIL digest over version: got '$got'"; exit 1; }
 
-# 6. A digest recorded in an older FORMAT is not this digest: it must not match, and must not crash.
+# 6. A marker in an older FORMAT is not this digest -- and is not "no marker" either. Somebody
+#    recorded a state on that release in a way this shipyard cannot compare, so publishing would be
+#    exactly how a bump to v2 republishes all 14 products ("recompute, never republish"). It gets its
+#    own answer, naming the tag that needs recomputing, and it must not crash.
 got="$(run "1.2.3-mavericks.1${TAB}v0:sha256:deadbeef" "$D1" 1.2.3-mavericks.2)"
-[ "$got" = PUBLISH ] || { echo "FAIL old-format digest: got '$got'"; exit 1; }
+[ "$got" = "SKIP=unreadable-marker/1.2.3-mavericks.1" ] \
+  || { echo "FAIL old-format marker: got '$got'"; exit 1; }
+
+# 6b. But a READABLE digest that merely differs is an ordinary earlier state: it blocks nothing.
+got="$(run "1.2.3-mavericks.1${TAB}${D2}" "$D1" 9.9.9-mavericks.9)"
+[ "$got" = PUBLISH ] || { echo "FAIL a different readable digest blocked publishing: got '$got'"; exit 1; }
+
+# 6c. A digest match WINS over an unreadable marker elsewhere: the state demonstrably is released, so
+#     there is nothing for a human to recompute before anything can proceed.
+got="$(run "8.0.0-mavericks.1${TAB}v0:sha256:deadbeef
+1.2.3-mavericks.1${TAB}${D1}" "$D1" 1.2.3-mavericks.1)"
+[ "$got" = "SKIP=already-released/1.2.3-mavericks.1" ] \
+  || { echo "FAIL an unreadable marker outranked a real match: got '$got'"; exit 1; }
 
 # 7. Many releases, the match in the middle.
 got="$(run "9.0.0-mavericks.1${TAB}
@@ -56,10 +87,10 @@ got="$(run "9.0.0-mavericks.1${TAB}
 8.0.0-mavericks.3${TAB}v1:sha256:abc" "$D1" 1.2.3-mavericks.1)"
 [ "$got" = "SKIP=already-released/1.2.3-mavericks.1" ] || { echo "FAIL middle match: got '$got'"; exit 1; }
 
-# 8. Priority when a digest match and a version match land on TWO DIFFERENT tags: an old repackage
-#    already carries this exact digest, while the current version was ALSO released before the
-#    digest existed. Naming the version-tag here would lie about which release actually has this
-#    state, and would wrongly ask for a backfill nothing needs.
+# 8. A digest match and a same-version release land on TWO DIFFERENT tags: an old repackage carries
+#    this exact digest, while the current version was also released, digest-less. The answer must
+#    name the tag that actually HAS this state; naming the version-tag would lie about which release
+#    realises it.
 got="$(run "9.9.9-mavericks.7${TAB}${D1}
 1.2.3-mavericks.1${TAB}" "$D1" 1.2.3-mavericks.1)"
 [ "$got" = "SKIP=already-released/9.9.9-mavericks.7" ] || { echo "FAIL priority, two tags: got '$got'"; exit 1; }

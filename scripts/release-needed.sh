@@ -2,15 +2,35 @@
 # Has this declared state already been released? One line out; decides nothing about HOW to publish
 # (spec 2026-09-12).
 #
-#   PUBLISH                                        no release carries this digest, none for this version
-#   SKIP=already-released/<tag>                    a release carries this digest
-#   SKIP=already-released/<tag> BACKFILL=<tag>     no digest anywhere, but <tag> already released this
-#                                                  VERSION -- the pre-migration past; record it
+#   PUBLISH                            no published release carries this digest
+#   SKIP=already-released/<tag>        a published release carries this digest
+#   SKIP=unreadable-marker/<tag>       no match, and <tag> records a marker in a format this shipyard
+#                                      cannot read. NOT "no marker": see below.
 #
-# Why the fallback exists: every release published before this design carries no digest. A lookup
-# that only asked "does any release carry my digest?" would answer PUBLISH for all of them and cut a
-# duplicate in every repo, unattended, the first night the backstop ran. It also makes a digest
-# FORMAT bump safe: recompute, never republish.
+# THERE IS DELIBERATELY NO INFERENCE FROM THE VERSION (ruling 16). An earlier cut fell back to
+# version equality -- "no digest anywhere, but a release exists for the version this state maps to,
+# so it must already be released" -- and then backfilled the digest onto that release. version.sh's
+# `auto` mode returns the EXISTING tag's N whenever the upstream already has one, so it maps every
+# declared state of a given upstream to ONE version: an ingredient bump that had not been released
+# was declared released, and the backfill cemented it by writing the unreleased state's digest onto a
+# release that did not contain it. The fast path matched from then on and no later reconcile ever
+# looked again -- a release lost silently and permanently, the golang incident reproduced by the
+# machinery built to prevent it.
+#
+# The pre-migration hazard that fallback was protecting against is handled exactly instead, once, at
+# migration: `release-state.sh --ref <tag>` renders what that tag's own tree contained, and
+# `release-state-record.sh --tag <tag>` records it. Computed, not guessed.
+#
+# --version is still required and deliberately does NOT reach the answer. Keeping it lets the caller
+# be told which version will not be published, and makes the quadrant that proves ruling 16
+# expressible: same version, DIFFERENT digest -> PUBLISH. A version match is not a state match.
+#
+# An UNREADABLE marker is not an absent one. A release recording `v0:...`, or anything else this
+# shipyard's format does not cover, is evidence that somebody recorded a state here in a way we
+# cannot compare -- so treating it as "no marker" and publishing is precisely how a bump to v2 would
+# republish all 14 products. The spec's promise is recompute, never republish, so this refuses to
+# decide in the unsafe direction and says which tag needs recomputing. A release carrying a READABLE
+# digest that simply differs from ours is an ordinary earlier state and blocks nothing.
 #
 # WHERE THE RECORDS COME FROM, and why it is split in two. The fetch is the only code in this design
 # that touches the outside world, and it was the only code no test executed -- every case injected
@@ -135,23 +155,30 @@ else
   transform_records < "$work/raw" > "$work/records"
 fi
 
-match_tag=""; version_tag=""
+match_tag=""; alien_tag=""; alien_value=""
 while IFS= read -r rec || [ -n "$rec" ]; do
   [ -n "$rec" ] || continue
   tag="${rec%%$TAB*}"
   dg="${rec#*$TAB}"
   [ "$dg" != "$rec" ] || dg=""            # no TAB in the record at all
   [ -n "$tag" ] || continue
-  if [ -n "$dg" ] && [ "$dg" = "$DIGEST" ] && [ -z "$match_tag" ]; then match_tag="$tag"; fi
-  if [ "$tag" = "$VERSION" ] && [ -z "$dg" ] && [ -z "$version_tag" ]; then version_tag="$tag"; fi
+  [ -n "$dg" ] || continue                # no marker: this release says nothing about any state
+  if [ "$dg" = "$DIGEST" ] && [ -z "$match_tag" ]; then match_tag="$tag"; fi
+  if [ -z "$alien_tag" ] && ! state_digest_readable "$dg"; then alien_tag="$tag"; alien_value="$dg"; fi
 done < "$work/records"
 
 if [ -n "$match_tag" ]; then
+  echo "release-needed: $match_tag already realises $DIGEST; $VERSION will not be published" >&2
   printf 'SKIP=already-released/%s\n' "$match_tag"
-elif [ -n "$version_tag" ]; then
-  # The pre-migration past, or a digest format bump: this version is already out there. Do not
-  # publish it again; record the digest so the fast path works from now on.
-  printf 'SKIP=already-released/%s BACKFILL=%s\n' "$version_tag" "$version_tag"
+elif [ -n "$alien_tag" ]; then
+  echo "release-needed: $alien_tag records a state marker this shipyard cannot read:" >&2
+  echo "    $alien_value" >&2
+  echo "    Nothing will publish until that is recomputed, because treating it as 'no marker' is how" >&2
+  echo "    a digest format bump republishes every product. Recompute it from the tag's own tree:" >&2
+  echo "        release-state.sh --ref $alien_tag" >&2
+  echo "        release-state-record.sh --tag $alien_tag --digest <that>" >&2
+  printf 'SKIP=unreadable-marker/%s\n' "$alien_tag"
 else
+  echo "release-needed: no published release realises $DIGEST; $VERSION would be published" >&2
   printf 'PUBLISH\n'
 fi

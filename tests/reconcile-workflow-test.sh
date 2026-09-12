@@ -42,11 +42,26 @@ perms = wf.get("permissions", {})
 if perms.get("actions") != "write":
     fail.append("reconcile.yml needs permissions.actions: write -- it dispatches the release run, and "
                 "without it the backstop fails as silently as the lost release it exists to catch")
+# It reads main and it reads releases; it must NOT be able to write one. The backstop used to
+# backfill a digest onto a release it had INFERRED was this state from a version match -- and
+# version.sh's `auto` mode maps every declared state of one upstream to one version, so that write
+# could cement an unreleased state onto a release that did not contain it, permanently and silently
+# (ruling 16). Marking a pre-migration release is a one-time migration step a human runs, with the
+# digest computed exactly from that tag's own tree.
+if perms.get("contents") != "read":
+    fail.append("reconcile.yml must declare permissions.contents: read, not write -- the backstop "
+                "reads state and dispatches; it never edits a release")
 
 text = p.read_text()
 for needed in ("release-state.sh", "release-needed.sh"):
     if needed not in text:
         fail.append(f"reconcile.yml never calls {needed}")
+# The step cannot creep back: asserting the permission alone would not stop someone re-adding the
+# call and then "fixing" the permission it needs.
+if "release-state-record.sh" in text:
+    fail.append("reconcile.yml calls release-state-record.sh -- the nightly backstop must never "
+                "write a digest onto a release. That write is a migration step, run once, with a "
+                "digest computed from the released tag's own tree (release-state.sh --ref)")
 # main is where state is DECLARED; a branch is a proposal (spec decision 3).
 if "ref: main" not in text:
     fail.append("reconcile.yml must check out main: a branch is a proposal, not a declaration")

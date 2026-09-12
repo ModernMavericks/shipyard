@@ -604,9 +604,9 @@ which is why publishing is idempotent rather than triggered.
   intended. So explanatory text in this section must never start with a dash — not because a dash
   always reads as an entry, but because when it does, the failure can be the silent kind this whole
   design exists to prevent.
-- **`sh "$SHIPYARD_SCRIPTS/release-state.sh" [--root DIR] [--render]` renders the declaration
-  canonically and hashes it** → `v1:sha256:<hex>` (`--render` prints the canonical bytes instead, for
-  debugging and the golden test). `release-state-record.sh --notes-file dist/RELEASE_NOTES.md
+- **`sh "$SHIPYARD_SCRIPTS/release-state.sh" [--root DIR] [--ref REV] [--render]` renders the
+  declaration canonically and hashes it** → `v1:sha256:<hex>` (`--render` prints the canonical bytes
+  instead, for debugging and the golden test). `release-state-record.sh --notes-file dist/RELEASE_NOTES.md
   --digest "$(...)"` writes `ModernMavericks-State: v1:sha256:<hex>` into the notes file **before
   `sign_and_appcast.sh` runs — never at publish time.** That one file is rendered into both the
   Sparkle appcast `<description>` and the GitHub Release body, so writing the marker before packaging
@@ -615,15 +615,28 @@ which is why publishing is idempotent rather than triggered.
   10.9 user's Sparkle update dialog should show the same notes the Release page shows, and a marker
   added later would leave it one line short of that. `release-needed.sh --digest D --version V [--repo R]`
   answers whether that state is already out — `PUBLISH`, `SKIP=already-released/<tag>`, or
-  `SKIP=already-released/<tag> BACKFILL=<tag>` for a pre-migration release that carries no digest yet.
-  `release-state-record.sh --tag T --digest D [--repo R]` backfills one. `reconcile.yml` is the
-  nightly backstop that calls all three and dispatches the real release workflow when nothing
-  realises the declared state.
+  `SKIP=unreadable-marker/<tag>` when some release records a marker in a format this shipyard cannot
+  read (see the wire-format rule below). Drafts are excluded; a `gh` failure is a failure, never a
+  decision. `reconcile.yml` is the nightly backstop that calls both and dispatches the real release
+  workflow when nothing realises the declared state — it reads and dispatches only
+  (`contents: read`, `actions: write`) and never writes a release body.
+- **A version match is NEVER a state match, and `release-needed.sh` does not look at the version.**
+  `version.sh auto` returns the *existing* tag's `N` whenever the upstream already has one, so it maps
+  every declared state of a given upstream to **one** version. An earlier cut inferred
+  "already released" from a version match and then backfilled the digest onto the release it had
+  guessed — cementing an unreleased ingredient bump as released, with no later reconcile ever looking
+  again. **To mark a release that predates this design**, compute its digest from the tree it
+  published and record it once, by hand or in a migration workflow:
+  `release-state-record.sh --tag T --digest "$(release-state.sh --ref T)" [--repo R]`. `--ref` renders
+  the *current* declaration using *that revision's* values, which is exactly the question worth
+  asking — a pre-migration tag has no `## Declared state` section of its own.
 - **Two rules an implementer otherwise gets wrong.** An automatic publish also requires
   `refs/heads/main` — the digest says whether a state *should* be released, not whether it is
   *declared*; a `workflow_dispatch` may target any ref, because a human choosing one IS the
   declaration. And the rendering is a **wire format**: changing it invalidates every recorded digest,
-  so a format bump means recompute, never republish.
+  so a format bump means recompute, never republish — recompute each affected release's digest with
+  `--ref <tag>` and re-record it. Until then `release-needed.sh` refuses to publish rather than read
+  an unreadable marker as an absent one.
 - **shipyard itself does not adopt this.** Its version is `<UPSTREAM_VERSION>.<commit count>`, so its
   own state changes on every push, and every push already publishes by design (see "Release
   workflow" above and shipyard's own `INGREDIENTS.md`). That is shipyard's declared exception, not a
@@ -1274,9 +1287,12 @@ in the same commit.
     `## Declared state` section to `INGREDIENTS.md` (`- upstream: UPSTREAM_VERSION`, or the version
     file the product commits if it is its own source); call `release-state-record.sh --notes-file
     dist/RELEASE_NOTES.md --digest "$(release-state.sh)"` in the build job, BEFORE
-    `sign_and_appcast.sh` — never at publish time; add the ten-line `reconcile.yml` caller **with its
-    own `permissions: {contents: write, actions: write}`** — a called workflow may not ask for more
-    than its caller grants, so a stub that omits them leaves the backstop unable to backfill or
+    `sign_and_appcast.sh` — never at publish time; mark the repo's existing release once, with
+    `release-state-record.sh --tag T --digest "$(release-state.sh --ref T)"`, so the backstop's first
+    night finds it (a version match will NOT be inferred on your behalf); add the ten-line
+    `reconcile.yml` caller **with its own `permissions: {contents: read, actions: write}`** — a called
+    workflow may not ask for more than its caller grants, so a stub that omits them leaves the
+    backstop unable to read state or
     dispatch, failing as silently as the lost release it exists to catch (the family already
     documents this trap in `scan-for-key.yml`'s header; say it here too, because this is the caller
     people will copy); do not add a `tags:` trigger — tags are retired as an input, and dispatch

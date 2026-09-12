@@ -98,4 +98,71 @@ mk "$w/m"; printf 'CMAKE_VERSION= 4.4.3 \nOTHER=ignored\n' > "$w/m/pins.env"
 got="$(sh "$S" --root "$w/m")"
 [ "$got" = "$GOLD" ] || { echo "FAIL whitespace around a keyed pin changed the digest: $got"; exit 1; }
 
+# --- --ref: the state a RELEASE actually contained, computed rather than inferred ----------------
+#
+# This is ruling 16 as a test. version.sh's `auto` mode returns the EXISTING tag's N whenever the
+# upstream already has one, so it maps every declared state of one upstream to ONE version: at the
+# tag below and on main today, `version.sh auto` says 1.2.3-mavericks.1 both times, while the states
+# differ. An earlier design read that version match as "already released" and then backfilled the
+# current digest onto that release -- cementing an unreleased ingredient bump as released, with no
+# later reconcile ever looking again. --ref removes the guess: the digest of a released state comes
+# from the tree that was released.
+GIT="git -c user.name=T -c user.email=t@example.com -c commit.gpgsign=false -c init.defaultBranch=main"
+r="$w/r"
+$GIT init -q "$r"
+printf '1.2.3\n' > "$r/UPSTREAM_VERSION"
+printf 'CMAKE_VERSION=4.4.3\nOTHER=ignored\n' > "$r/pins.env"
+# The pre-migration past, faithfully: at the tag there is no "## Declared state" section AT ALL.
+printf '%s\n' '# Build ingredients' '' 'prose only' > "$r/INGREDIENTS.md"
+$GIT -C "$r" add -A
+$GIT -C "$r" commit -q -m 'the release that predates this design'
+$GIT -C "$r" tag 1.2.3-mavericks.1
+# ...then the repo declares its state, and an ingredient bump lands.
+printf 'CMAKE_VERSION=4.4.4\nOTHER=ignored\n' > "$r/pins.env"
+printf '%s\n' '# Build ingredients' '' '## Declared state' '' \
+  '- upstream: UPSTREAM_VERSION' '- cmake: pins.env:CMAKE_VERSION' > "$r/INGREDIENTS.md"
+$GIT -C "$r" add -A
+$GIT -C "$r" commit -q -m 'declare state, and bump cmake'
+
+# 14. The working tree renders the CURRENT state...
+got="$(sh "$S" --root "$r")"
+want='v1:sha256:405b7fdda86a03f4ef636aceb3c7c819fe5d93208118cd365a0b962cb37c8004'
+[ "$got" = "$want" ] || { echo "FAIL ref fixture, working tree: got '$got'"; exit 1; }
+
+# 15. ...and --ref renders what the TAG contained: same rendering, same wire format, same golden
+#     digest, only the source of the values changes. The two must DIFFER -- that difference is the
+#     unreleased bump the version match could not see.
+got="$(sh "$S" --root "$r" --ref 1.2.3-mavericks.1)"
+[ "$got" = "$GOLD" ] || { echo "FAIL --ref did not render the tag's own tree: got '$got'"; exit 1; }
+
+# 16. The DECLARATION comes from the working tree on purpose: the tag's tree has no "## Declared
+#     state" section, because every pre-migration release predates it. The question --ref answers is
+#     "what were TODAY's declared inputs worth at that revision?".
+got="$(sh "$S" --root "$r" --ref 1.2.3-mavericks.1 --render)"
+want="$(printf 'cmake=4.4.3\nupstream=1.2.3')"
+[ "$got" = "$want" ] || { echo "FAIL --ref --render: got '$got'"; exit 1; }
+
+# 17. A revision that does not exist is exit 2, never a digest. A shallow clone is the realistic way
+#     to get here, and a wrong digest recorded onto a release cannot be un-recorded (exit 3 forever).
+rc=0; sh "$S" --root "$r" --ref no-such-tag >"$w/r17" 2>&1 || rc=$?
+[ "$rc" = 2 ] || { echo "FAIL a bogus --ref should exit 2, got $rc"; exit 1; }
+grep -q 'no-such-tag' "$w/r17" || { echo "FAIL the bogus-ref error does not name it"; exit 1; }
+#     And it must say the REVISION is the problem, not blame the first declared file: "UPSTREAM_VERSION
+#     is not in no-such-tag's tree" sends the reader to the wrong question entirely.
+grep -q 'not a revision' "$w/r17" \
+  || { echo "FAIL a bogus --ref is not reported as a bad revision: $(cat "$w/r17")"; exit 1; }
+
+# 18. A declared path the revision's tree does not have is exit 2 too, naming the ref: at an older
+#     tag a pin file may simply not exist yet, and "absent" must not render as a new state.
+printf '%s\n' '# Build ingredients' '' '## Declared state' '' \
+  '- upstream: UPSTREAM_VERSION' '- cmake: pins.env:CMAKE_VERSION' '- later: later.pin' \
+  > "$r/INGREDIENTS.md"
+printf '7\n' > "$r/later.pin"
+rc=0; sh "$S" --root "$r" --ref 1.2.3-mavericks.1 >"$w/r18" 2>&1 || rc=$?
+[ "$rc" = 2 ] || { echo "FAIL a path absent at the ref should exit 2, got $rc"; exit 1; }
+grep -q 'later.pin' "$w/r18" || { echo "FAIL the absent-at-ref error does not name the file"; exit 1; }
+grep -q '1.2.3-mavericks.1' "$w/r18" || { echo "FAIL the absent-at-ref error does not name the ref"; exit 1; }
+# ...and that same declaration renders fine from the working tree, so the failure is about the ref.
+sh "$S" --root "$r" >/dev/null || { echo "FAIL the working tree stopped rendering"; exit 1; }
+
 echo "PASS: release-state"

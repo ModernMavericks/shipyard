@@ -27,7 +27,15 @@ on:
         default: "local_release=true"
 
 permissions:
-  contents: write         # release-state-record.sh edits a release body; see the backfill step
+  contents: read          # check out main, and read published releases. NOT write: this workflow
+                          # deliberately never edits a release body. It used to backfill a digest
+                          # onto a release inferred-to-be-this-state from a version match, and that
+                          # inference was unsound -- version.sh's `auto` mode maps every declared
+                          # state of one upstream to one version, so the backfill could cement an
+                          # UNRELEASED state onto a release that did not contain it and no later
+                          # reconcile would ever look again. Marking a pre-migration release is now a
+                          # one-time migration step a human runs, with the digest computed exactly
+                          # from that tag's own tree (`release-state.sh --ref <tag>`).
   actions: write          # dispatching the release run -- without it this fails as silently as the
                           # lost release it exists to catch
 
@@ -67,17 +75,14 @@ jobs:
             --repo '${{ github.repository }}')"
           echo "$answer"
           echo "answer=$answer" >> "$GITHUB_OUTPUT"
-
-      # A release that predates this design carries no digest. Record it rather than republish it.
-      - name: Backfill the digest onto an already-published release
-        if: contains(steps.needed.outputs.answer, 'BACKFILL=')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          tag="$(printf '%s\n' '${{ steps.needed.outputs.answer }}' | sed -n 's/.*BACKFILL=//p')"
-          sh "$SHIPYARD_SCRIPTS/release-state-record.sh" \
-            --tag "$tag" --digest '${{ steps.state.outputs.digest }}' --repo '${{ github.repository }}'
+          # A marker nothing here can read blocks publishing on purpose (see release-needed.sh), so
+          # say so loudly: "nothing to do" and "nothing can be done" must not look the same in a log
+          # nobody reads on a quiet night.
+          case "$answer" in
+            SKIP=unreadable-marker/*)
+              echo "::warning::$answer -- recompute that release's digest from its own tree" \
+                   "(release-state.sh --ref <tag>) and record it; nothing will publish until then" ;;
+          esac
 
       - name: Dispatch the release run
         if: startsWith(steps.needed.outputs.answer, 'PUBLISH')

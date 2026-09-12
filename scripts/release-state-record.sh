@@ -2,6 +2,16 @@
 # Record a state digest onto an ALREADY PUBLISHED release, so the fast path works for releases that
 # predate this design (spec 2026-09-12, failure modes).
 #
+# --tag is the ONE-TIME MIGRATION TOOL a human (or a migration workflow) runs when a repo first
+# declares its state -- not something the nightly backstop does. It is paired with
+# `release-state.sh --ref <tag>`, which renders what that tag's tree actually contained, so the
+# digest recorded on a release is the digest OF that release. The earlier design had reconcile.yml
+# backfill a digest inferred from a version match; version.sh's `auto` mode maps every declared state
+# of one upstream to one version, so that inference could write an unreleased state's digest onto a
+# release that did not contain it -- and, once written, the fast path matched and nothing looked
+# again. Marking each existing release once, with what it really holds, is exact where that was a
+# guess (ruling 16).
+#
 # The only writer of a release body outside the publish path, and deliberately narrow:
 #   - APPENDS one line and preserves every other byte (those notes are what users read);
 #   - idempotent -- the same digest again is a no-op, so the nightly backstop can run forever;
@@ -17,8 +27,8 @@
 #                    same notes the Release page shows, and a marker added later (at publish time)
 #                    would leave it one line short of that. No --tag: the notes are not a release yet,
 #                    and inventing a tag argument would invite passing the wrong one.
-#   --tag T          the BACKFILL path: an already-published release, for releases that predate this
-#                    design (spec 2026-09-12, failure modes).
+#   --tag T          the MIGRATION path: an already-published release, marked once with the digest
+#                    computed from its OWN tree (`release-state.sh --ref T`).
 #
 #   usage: release-state-record.sh --notes-file F --digest v1:sha256:<hex>
 #          release-state-record.sh --tag T --digest v1:sha256:<hex> [--repo OWNER/NAME]
