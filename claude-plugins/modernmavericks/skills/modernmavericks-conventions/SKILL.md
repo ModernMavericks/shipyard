@@ -632,11 +632,41 @@ its `main` — in the left column, that push is a release.
 
 ## Release notes
 
-- One committed file per release: `release-notes/<full-version>.md` (becomes the Sparkle appcast
-  `<description>` and the GitHub Release body). A `release-notes/README.md` documents the convention.
-- Missing note → the GitHub Release uses `gh release create … --generate-notes`; the appcast needs a
-  **guaranteed non-empty** file, so use `build/release-notes-file.sh <TAG> <FULL>` which returns the
-  committed note or generates a minimal default to a temp file (the appcast generator rejects empty notes).
+- **One generator: `$SHIPYARD_SCRIPTS/release-notes.sh`.** It writes the ONE file that becomes both
+  the Sparkle appcast `<description>` and the GitHub Release body, so the two cannot disagree:
+  ```sh
+  sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$TAG" --version "$FULL" \
+     --product OpenSSH --min-os 10.9.5 --out dist/RELEASE_NOTES.md
+  ```
+  `--product` is the BARE product noun; the script composes the family's prose register
+  (`## OpenSSH 9.9p2 for Mavericks (9.9p2-mavericks.6)`, and `## Porthole 20260802.6` for a
+  self-upstream product that is its own upstream). `--min-os` emits the install-floor line — omit it
+  for a product that is not a 10.9 `.pkg`. `--line` scopes the baseline for a repo shipping parallel
+  lines (golang's `1.26`); it is normalized internally, so both `1.26` and `1.26.*` work.
+- **The shape, in order:** title, the committed `release-notes/<TAG>.md` prose verbatim when present,
+  `### What changed`, `### Build ingredients` when a pin moved, then a footer (the floor line, a
+  compare link). Prose stays optional and is never rewritten; a release with none still says what
+  changed — `release-notes-file.sh` is now a thin back-compat wrapper onto the generator, so the six
+  repos still calling its old signature get the standard body before they migrate.
+- **Every gap is FATAL, and names its cause.** Notes used to be prose that must never fail a release,
+  so every generated fragment was appended with `|| true` and `2>/dev/null` — which meant a broken
+  hook, an unreadable pin, or a shallow checkout produced a *shorter* body and a green run. openssh
+  never listed a moved ingredient in any release (its comparison key skipped every `9.9p2` tag —
+  see `comparison_key()` below), and signal-desktop shipped a new upstream with no link. Fatal now: no
+  visible tags when the version implies an earlier release exists (a shallow or tagless checkout
+  cannot decide new-upstream vs. repackage), a new upstream whose hook is missing (unless
+  `INGREDIENTS.md` declares `No upstream release notes: <reason>`) or broken, a repackage caller whose
+  ingredient pins cannot be read, an ambiguous caller (the conventional-path workflow isn't the one
+  calling `repackage-on-ingredient-bump.yml`, and more than one other workflow does), an empty result.
+- **`check-release-notes.sh <file> <version>`** asserts that shape: a title naming this exact version,
+  a `### What changed`, no empty section, a non-empty body. The generator self-checks what it just
+  wrote with it; `publish-release.yml` will check what it is about to publish with it too, once that
+  enforcement lands.
+- **`comparison_key()` in `lib.sh` is the one Sparkle-comparable-version derivation**
+  (`-mavericks.N` → `.N`, and OpenSSH-portable's `9.9p2` → `9.9.2`), now shared by `gen_appcast.sh` and
+  `previous-release-tag.sh`. Its absence from the latter is why no openssh release ever listed a moved
+  ingredient — the appcast's `<sparkle:version>` folded `p2` and found a baseline; the notes generator's
+  own numeric comparison didn't, and silently found none.
 
 ### A new upstream links upstream's own notes
 
@@ -646,10 +676,14 @@ naming the new version is not enough. **Every port repo carries `build/upstream-
 which prints ONE URL: upstream's notes for exactly that version (the bare upstream version, `1.102.3`,
 not the `-mavericks.N` tag).
 
-- **Shipyard turns it into the section; the repo only answers "where".** `release-notes-file.sh`
-  appends `### Upstream` / `- [Upstream release notes for <ver>](<url>)` via `upstream-notes.sh`, ahead
-  of the ingredient facts. A repo that composes its notes itself calls `sh
-  "$SHIPYARD_SCRIPTS/upstream-notes.sh" "$VER"` and appends what it prints (tailscale's `release.yml`).
+- **Shipyard turns it into a `### What changed` bullet; the repo only answers "where".**
+  `release-notes.sh` calls this hook through `upstream-notes.sh --url-only`, whose exit code says
+  whether a missing link is due (3 = a repackage), absent (4 = no hook) or broken (5 = tags unknowable
+  or the hook itself failed) — it decides whether a link is DUE before it even looks for the hook, so
+  a repackage never needs one to exist. Only 3 is benign; the generator turns 4 with no declared
+  reason, and 5, into a stopped release. A repo not yet calling the generator can still get the older
+  standalone `### Upstream` section by calling `sh "$SHIPYARD_SCRIPTS/upstream-notes.sh" "$VER"`
+  (no `--url-only`) and appending what it prints (tailscale's `release.yml`).
 - **Only for a NEW upstream.** `upstream-notes.sh` links when no *other* `<upstream>-mavericks.*` tag
   exists, so a repackage gets nothing. It decides from the tags rather than the previous release,
   because with parallel lines the previous release can be another line's. A shallow clone or a repo
@@ -1091,6 +1125,10 @@ it here.** A silently dropped increment is how the family drifted in the first p
       shipyard. `require_key_scan.sh` now refuses a signed release with no scan record, and
       `check-family-conventions.sh` (check 12) fails a repo that signs without the job. compat is
       exempt by omission: it is not on GitHub
+- [x] One release-notes generator for the family (`release-notes.sh`), one shape, gaps fatal rather
+      than silent — done 2026-09-11. Per-repo migration (13 repos, swift-runtime first) and the three
+      enforcement layers (conventions-gate check, publisher body-shape validation, artifact-conformance
+      appcast-vs-body agreement) follow as separate plans
 - [ ] **North star, not yet designed:** should a product repo carry build machinery at all? One
       declarative config per repo (upstream, verification, binaries, ingredients, updater) that
       shipyard turns into the build, package, release, and checks — a repo that cannot express a
