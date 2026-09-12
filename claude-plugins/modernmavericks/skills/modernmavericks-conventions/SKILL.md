@@ -998,15 +998,18 @@ none of which anything detected. A convention that is not checked is a conventio
 
 The last one reads **lines, not shell syntax**, so know its edges before you write around it:
 
-- **Not a call:** a whole comment line, and a bare `(` before the command — `echo "not built (cmake
-  --build <dir>)"` is how a script tells a human what to run, and three repos' only hit was that shape.
+- **Not *treated* as a call:** a whole comment line, and a bare `(` before the command. A comment
+  genuinely is not a call; the bare `(` is a **deliberate blind spot** — it is what lets
+  `echo "not built (cmake --build <dir>)"` through, which was the only hit in three compliant files.
+  The cost is that a real `(cmake -S . -B x)` subshell is missed too; see the false negatives below.
 - **Still a call, even in a quoted string or a heredoc:** anything with `;`, `&&`/`|` or a backtick
   immediately before the command. `echo "to rebuild: cmake -S . -B b; cmake --build b"` and an
   ordinary ``usage() { cat <<EOF … EOF }`` block listing commands both **fail the gate**. Telling
   those from a real call needs a shell parser. Write such prose as a `#` comment, or declare a
   `shipyard-cmake-only:<path>` deviation with the reason.
 - **Known false negatives**, all deliberate, because widening would flag far more prose than calls:
-  a path (`/usr/local/bin/cmake`), a variable (`"$CMAKE"`), and anything behind a prefix command —
+  a bare subshell (`(cmake -S . -B x)`, the cost of the blind spot above), a path
+  (`/usr/local/bin/cmake`), a variable (`"$CMAKE"`), and anything behind a prefix command —
   `sudo cmake`, `env FOO=1 cmake`, `command cmake`, `xcrun cmake`, `time cmake`. Each is still caught
   at configure time, where the config refuses the foreign cmake by name however it was spelled. The
   gate moves the common case earlier; it is not the only thing standing there.

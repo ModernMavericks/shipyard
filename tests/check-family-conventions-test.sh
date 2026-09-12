@@ -615,12 +615,19 @@ SH
 (cd "$work/p16lim4" && git add -A) >/dev/null 2>&1
 lim16 "$work/p16lim4" "a usage() heredoc listing commands"
 
-# ...and the false negatives, asserted for the same reason: a path, a variable, or a prefix command
-# hides a real call from this check. Each is caught at configure time instead, where the config
-# refuses the foreign cmake by name -- so the gate is an earlier warning, not the only one.
+# ...and the false negatives, asserted for the same reason: a bare subshell, a path, a variable, or a
+# prefix command hides a real call from this check. Each is caught at configure time instead, where the
+# config refuses the foreign cmake by name -- so the gate is an earlier warning, not the only one.
+#
+# The subshell is the one to keep honest. Dropping a bare `(` from the separator class is what killed
+# the three real false positives (container-tools, openssh, swift-runtime), and putting it back would
+# re-break all three -- so the miss is the deliberate price, NOT evidence that `(` means prose. A real
+# `(cmake ...)` runs a real cmake and this gate says nothing. Pinned here so the claim above check 16
+# stays true, rather than being rediscovered by whoever writes the first subshell.
 mkrepo "$work/p16fn"
 cat > "$work/p16fn/build/hidden.sh" <<'SH'
 #!/bin/sh
+(cmake -S . -B /tmp/xyz)
 /usr/local/bin/cmake -S . -B /tmp/b
 "$CMAKE" -S . -B /tmp/b
 sudo cmake --install /tmp/b

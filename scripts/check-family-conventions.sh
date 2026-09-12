@@ -535,8 +535,12 @@ fi
 #
 # WHAT THIS IS AND IS NOT. It reads lines, not shell syntax, so be precise about the claim:
 #
-#   NOT a call (and verified so, below): a whole COMMENT line; a bare `(` before the command, which is
-#   how a script says `... || { echo "not built (cmake --build <dir>)"; }`.
+#   NOT TREATED as a call: a whole COMMENT line, and a bare `(` before the command. Note the wording.
+#   A comment genuinely is not a call; a bare `(` is a DELIBERATE BLIND SPOT, not a truth about shell.
+#   `(cmake -S . -B /tmp/x)` is a real subshell running a real cmake and this check says nothing --
+#   the price of letting `... || { echo "not built (cmake --build <dir>)"; }` through, which was the
+#   only hit in three compliant files. Paying it is the right trade (see the false negatives below),
+#   but it is a miss, and calling it "not a call" would be a lie that outlives whoever wrote it.
 #
 #   STILL a call as far as this check is concerned, even inside quotes or a heredoc: anything with a
 #   `;`, a `&&`/`|`, or a backtick immediately before the command. So
@@ -545,12 +549,13 @@ fi
 #   needs a shell parser -- so it is asserted in the test suite rather than left to be rediscovered by
 #   somebody's red PR. Write such prose as a comment, or declare a shipyard-cmake-only deviation.
 #
-#   KNOWN FALSE NEGATIVES, all deliberate: a path (`/usr/local/bin/cmake`), a variable (`"$CMAKE"`),
-#   and anything behind a prefix command -- `sudo cmake`, `env FOO=1 cmake`, `command cmake`,
-#   `xcrun cmake`, `time cmake`. Widening to catch these would flag far more prose than it caught
-#   calls. All of them are backstopped at configure time, where MavericksShipyardConfig.cmake refuses
-#   the foreign cmake by name however it was spelled; this check exists to move the common case
-#   earlier, not to be the only thing standing there.
+#   KNOWN FALSE NEGATIVES, all deliberate: a bare subshell (`(cmake -S . -B x)`, per the note above);
+#   a path (`/usr/local/bin/cmake`); a variable (`"$CMAKE"`); and anything behind a prefix command --
+#   `sudo cmake`, `env FOO=1 cmake`, `command cmake`, `xcrun cmake`, `time cmake`. Widening to catch
+#   these would flag far more prose than it caught calls. All of them are backstopped at configure
+#   time, where MavericksShipyardConfig.cmake refuses the foreign cmake by name however it was
+#   spelled; this check exists to move the common case earlier, not to be the only thing standing
+#   there. Each is pinned by the p16fn fixture, so the list cannot quietly go stale.
 cmdlist="$(mktemp "${TMPDIR:-/tmp}/conventions-cmds.XXXXXX")"
 TAB="$(printf '\t')"
 {
