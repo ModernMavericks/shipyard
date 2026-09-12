@@ -78,4 +78,10 @@ grep -q 'string(REPLACE "-mavericks' "$here/../MavericksSparkle.cmake" \
 grep -q '(\[0-9\])p(\[0-9\])' "$here/../MavericksSparkle.cmake" \
   || { echo "FAIL MavericksSparkle.cmake lost its pN derivation"; exit 1; }
 
+# gen_appcast.sh must NOT carry its own derivation; it must call comparison_key().
+# Regression test for the family's ONE-derivation rule that was violated when the
+# pN rule was added to gen_appcast but not to previous-release-tag.
+grep -q 's/-mavericks\\./\\./' "$here/../scripts/gen_appcast.sh" 2>/dev/null \
+  && { echo "FAIL gen_appcast still derives its own key instead of calling comparison_key"; exit 1; }
+
 echo "PASS: version-lib"
