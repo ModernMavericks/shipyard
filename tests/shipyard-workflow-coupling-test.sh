@@ -89,11 +89,16 @@ ci, rel = cmds("ci.yml"), cmds("release.yml")
 def has(cs, pat): return any(re.search(pat, c) for c in cs)
 
 # Each of these is a step release.yml would otherwise run for the first time while publishing.
+# The two install-smoke lines carry their failure plumbing INTO the pattern. Both run under `set -eu`
+# with the failure caught, so the installer log can be dumped before the step dies -- and `|| true` in
+# place of `|| bad=1` turns the whole smoke into decoration while every other assertion stays green
+# (R-P1-20). A pattern that stops at the command name cannot see that.
 for pat, what in ((r"^sh scripts/lipo-merge-tree\.sh ", "merge the two updater builds (scripts/lipo-merge-tree.sh)"),
                   (r"^sh scripts/package-pkg\.sh ", "build the pkg (scripts/package-pkg.sh)"),
                   (r"^sh scripts/assert_pkg_installs_in_place\.sh ", "gate the pkg (scripts/assert_pkg_installs_in_place.sh)"),
-                  (r"^sudo installer -pkg ", "install the pkg on the runner"),
-                  (r"^sh scripts/assert-installed-shipyard\.sh ", "assert the install (scripts/assert-installed-shipyard.sh)")):
+                  (r"^sudo installer -pkg .* \|\| bad=1$", "install the pkg on the runner, recording failure (sudo installer ... || bad=1)"),
+                  (r"^sh scripts/assert-installed-shipyard\.sh .* \|\| bad=1$",
+                   "assert the install, recording failure (scripts/assert-installed-shipyard.sh ... || bad=1)")):
     if not has(rel, pat):
         bad.append("release.yml no longer does: %s" % what)
     elif not has(ci, pat):
@@ -113,10 +118,34 @@ for name, cs in (("ci.yml", ci), ("release.yml", rel)):
             bad.append("%s asserts %s inline; that belongs in scripts/assert-installed-shipyard.sh, "
                        "which both workflows and tests/assert-installed-shipyard-test.sh share" % (name, what))
 
+# R-P1-19: install@v1 may not nest `uses: ./.github/actions/shipyard-cmake` -- that path resolves
+# against the CONSUMER's workspace, and nested actions are prepared before step `if:` conditions are
+# evaluated, so every consumer would break on a step that was never going to run. The tree is
+# therefore built by the CALLING workflow. That is a coupling: it lives in neither file alone, and
+# each looks complete without it.
+for name in ("ci.yml", "release.yml"):
+    d = yaml.safe_load(open(os.path.join(wf, name)))
+    for job, spec in (d.get("jobs") or {}).items():
+        steps = spec.get("steps") or []
+        for step in steps:
+            if str(step.get("uses", "")) != "./.github/actions/install":
+                continue
+            with_ = step.get("with") or {}
+            if with_.get("source") != "build":
+                continue
+            if "outputs.tree" not in str(with_.get("cmake-tree", "")):
+                bad.append("%s job %s installs with source: build but passes no cmake-tree from "
+                           "./.github/actions/shipyard-cmake; install@v1 cannot fetch it itself "
+                           "(R-P1-19)" % (name, job))
+            elif not any(str(t.get("uses", "")) == "./.github/actions/shipyard-cmake" for t in steps):
+                bad.append("%s job %s passes a cmake-tree but never runs "
+                           "./.github/actions/shipyard-cmake to produce it" % (name, job))
+
 if bad:
     for b in bad:
         print("FAIL:", b)
     sys.exit(1)
-print("ok: ci.yml rehearses the packaging path release.yml only ever runs while publishing")
+print("ok: ci.yml rehearses the packaging path release.yml only ever runs while publishing, and both "
+      "hand install@v1 the CMake tree rather than letting it nest a local action")
 PY
 echo "PASS: shipyard-workflow-coupling"

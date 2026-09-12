@@ -12,6 +12,17 @@ inputs:
       workflows only -- assemble shipyard-cmake from the cached CMake build plus this checkout.
     required: false
     default: release
+  cmake-tree:
+    description: >
+      source: build only. The universal CMake tree to assemble the prefix from -- the `tree` output of
+      shipyard's own .github/actions/shipyard-cmake, which the CALLING WORKFLOW runs. This action must
+      not run it itself: a `uses: ./...` inside a composite resolves against the CONSUMER's
+      GITHUB_WORKSPACE, and nested actions are prepared before step `if:` conditions are evaluated, so
+      every consumer would fail with "Can't find 'action.yml'" for a step that was never going to run
+      -- and shipyard's own CI could never reproduce it, because its workspace does have that path
+      (R-P1-19).
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -80,12 +91,14 @@ runs:
         echo "${RUNNER_OS:-this runner} is not macOS and shipyard has no Linux pkg yet, so this installs nothing: SHIPYARD_SCRIPTS=$scripts gives you shipyard's shell half from the ref you pinned. No cmake was installed, so anything needing shipyard-cmake will fail here -- run that on a macOS runner."
 
     # shipyard's own workflows only, and the reason this input exists: shipyard cannot install a
-    # released shipyard to test the one it is about to release. `uses:` with a local path inside a
-    # composite resolves against the WORKSPACE, which in those jobs is shipyard's own checkout.
-    - if: inputs.source == 'build'
-      id: cm
-      uses: ./.github/actions/shipyard-cmake
-
+    # released shipyard to test the one it is about to release.
+    #
+    # THIS ACTION MUST CONTAIN NO `uses: ./...`. GitHub resolves a local action path inside a
+    # composite against GITHUB_WORKSPACE -- the CONSUMER's checkout, which has no
+    # .github/actions/shipyard-cmake -- and it prepares nested actions BEFORE evaluating step `if:`
+    # conditions, so `source: build` being false would not spare them: every consumer's job would die
+    # with "Can't find 'action.yml'". shipyard's own CI cannot reproduce that, because its workspace
+    # is shipyard. So the caller runs the composite and passes its output in (R-P1-19).
     - if: inputs.source == 'build'
       shell: bash
       run: |
@@ -93,7 +106,10 @@ runs:
         # The prefix a developer's pkg would install, assembled from the cached CMake tree plus THIS
         # checkout -- so the config's refusal passes here for the same reason it does there: the
         # running cmake lives in a prefix that also holds a shipyard.
-        tree='${{ steps.cm.outputs.tree }}'
+        tree='${{ inputs.cmake-tree }}'
+        [ -n "$tree" ] || {
+          echo "::error::source: build needs cmake-tree -- run shipyard's .github/actions/shipyard-cmake in the calling workflow and pass its 'tree' output in. (This action cannot run it: see the comment above this step.)"; exit 1; }
+        [ -x "$tree/bin/cmake" ] || { echo "::error::cmake-tree has no bin/cmake: $tree"; exit 1; }
         p="$RUNNER_TEMP/shipyard-prefix"; rm -rf "$p"; cp -R "$tree" "$p"
         "$p/bin/cmake" -S "$GITHUB_WORKSPACE" -B "$RUNNER_TEMP/shipyard-self-build" >/dev/null
         "$p/bin/cmake" --install "$RUNNER_TEMP/shipyard-self-build" --prefix "$p" >/dev/null

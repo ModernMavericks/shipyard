@@ -40,10 +40,16 @@ jobs:
       # the *.bats suites below actually run instead of reporting SKIP. Source-build because shipyard
       # cannot install a RELEASED shipyard to test the commit that is about to become one; every
       # configure below therefore goes through shipyard-cmake, exactly as a consumer's must.
+      #
+      # The tree is built here and passed in: install@v1 must contain no `uses: ./...` of its own, or
+      # every consumer breaks on a path only shipyard's workspace has (R-P1-19).
+      - id: cm
+        uses: ./.github/actions/shipyard-cmake
       - name: Install mavericks-shipyard (self, source-build)
         uses: ./.github/actions/install
         with:
           source: build
+          cmake-tree: ${{ steps.cm.outputs.tree }}
 
       # The workflow-parse gate (check-family-conventions.sh check 8) needs PyYAML, and the macOS
       # runner's python3 has none -- which is what reddened every run here for a month. It is
@@ -86,10 +92,14 @@ jobs:
           fetch-depth: 0      # blanket repo convention (shipyard-workflow-coupling-test.sh): every
                               # checkout in ci.yml/release.yml must be full-depth, so shipyard-version.sh
                               # never meets a shallow clone no matter which job runs it later.
+      # Built here, passed in: install@v1 must contain no `uses: ./...` of its own (R-P1-19).
+      - id: cm
+        uses: ./.github/actions/shipyard-cmake
       - name: Install mavericks-shipyard (self, source-build)
         uses: ./.github/actions/install
         with:
           source: build
+          cmake-tree: ${{ steps.cm.outputs.tree }}
 
       # $SHIPYARD_CMAKE_TREE, never the prefix install@v1 assembled: that prefix has shipyard installed
       # into it, and this artifact is meant to be the bare CMake tree a 10.9 box can unpack and run.

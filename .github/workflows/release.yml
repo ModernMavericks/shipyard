@@ -38,10 +38,18 @@ jobs:
       # installs itself in source-build mode: the cached universal CMake tree plus this checkout,
       # assembled into the same prefix shape the pkg lays down. Everything below configures with
       # shipyard-cmake, exactly as a consumer must.
+      #
+      # The CMake tree is built HERE and passed in, rather than by install@v1 itself: a `uses: ./...`
+      # inside a composite resolves against the consumer's workspace and is prepared before step `if:`
+      # conditions run, so nesting it there would break every consumer of install@v1 in a way this
+      # repo's CI could never reproduce (R-P1-19).
+      - id: cm
+        uses: ./.github/actions/shipyard-cmake
       - name: Install mavericks-shipyard (self, source-build)
         uses: ./.github/actions/install
         with:
           source: build
+          cmake-tree: ${{ steps.cm.outputs.tree }}
 
       - uses: actions/setup-python@v7
         with:

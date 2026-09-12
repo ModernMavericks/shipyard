@@ -71,9 +71,17 @@ build_steps = wf["jobs"]["build"]["steps"]
 
 # shipyard builds with its own cmake: the build job installs itself in source-build mode. It cannot
 # install a RELEASED shipyard to test the commit that is about to become one.
-if not any(str(s.get("uses", "")) == "./.github/actions/install" and (s.get("with") or {}).get("source") == "build"
-           for s in build_steps):
+inst = [s for s in build_steps
+        if str(s.get("uses", "")) == "./.github/actions/install" and (s.get("with") or {}).get("source") == "build"]
+if not inst:
     bad.append("the build job must use ./.github/actions/install with source: build")
+# ...and the CMake tree is built by THIS WORKFLOW and handed in. install@v1 must not reach for it
+# itself: see the R-P1-19 note in the install-action block at the end of this file.
+elif "outputs.tree" not in str((inst[0].get("with") or {}).get("cmake-tree", "")):
+    bad.append("the build job must pass cmake-tree: the `tree` output of ./.github/actions/shipyard-cmake "
+               "into install@v1 (R-P1-19); got %r" % (inst[0].get("with") or {}).get("cmake-tree"))
+elif not any(str(s.get("uses", "")) == "./.github/actions/shipyard-cmake" for s in build_steps):
+    bad.append("the build job passes a cmake-tree but never runs ./.github/actions/shipyard-cmake to produce it")
 
 # One universal updater: configured per arch at its own floor (the loop supplies $1/$2), built, merged.
 need(r'^for a in "x86_64 10\.9" "arm64 11\.0"; do$',
@@ -131,8 +139,15 @@ else:
     def has(p): return any(re.search(p, c) for c in sc)
     if not has(r"^want=\"\$\(sed -n 's/\^CMAKE_VERSION=//p' cmake\.pin\)\"$"):
         bad.append("the smoke never reads the pinned CMake version out of cmake.pin")
-    if not has(r'^sh scripts/assert-installed-shipyard\.sh --cmake-version "\$want" --root /(\s|$)'):
-        bad.append("the smoke never runs scripts/assert-installed-shipyard.sh against the installed root")
+    # The PLUMBING, not just the call. Both of these run under `set -eu` with their failure caught, so
+    # that the installer log can be dumped before the step dies -- and `|| true` in place of `|| bad=1`
+    # makes the whole smoke decorative while every other assertion here stays green (R-P1-20).
+    if not has(r'^sudo installer -pkg "?dist/mavericks-shipyard-\$v\.pkg"? -target / \|\| bad=1$'):
+        bad.append("the smoke's `sudo installer` does not record its failure (|| bad=1), so a pkg that "
+                   "fails to install cannot fail the step")
+    if not has(r'^sh scripts/assert-installed-shipyard\.sh --cmake-version "\$want" --root / \|\| bad=1$'):
+        bad.append("the smoke never runs scripts/assert-installed-shipyard.sh against the installed "
+                   "root with its failure recorded (|| bad=1)")
     if not has(r'^\[ "\$bad" -eq 0 \] \|\| exit 1$'):
         bad.append("the smoke's failures never fail the step ([ \"$bad\" -eq 0 ] || exit 1)")
     if not s.get("timeout-minutes"):
@@ -169,7 +184,22 @@ a = yaml.safe_load(open(sys.argv[1]))
 bad = []
 if "source" not in (a.get("inputs") or {}):
     bad.append("install@v1 has no 'source' input (release | build)")
+if "cmake-tree" not in (a.get("inputs") or {}):
+    bad.append("install@v1 has no 'cmake-tree' input; source: build must be HANDED the CMake tree (R-P1-19)")
 steps = (a.get("runs") or {}).get("steps") or []
+
+# R-P1-19. NO local `uses: ./...` may appear in this composite, ever. GitHub resolves such a path
+# against GITHUB_WORKSPACE -- the CONSUMER's checkout, which has none of shipyard's actions -- and it
+# prepares nested actions BEFORE evaluating step `if:` conditions, so guarding one with
+# `inputs.source == 'build'` does not spare a consumer: their job dies with "Can't find 'action.yml'"
+# for a step that was never going to run. shipyard's own CI cannot catch it, because its workspace IS
+# shipyard and the path resolves there. The caller runs the composite and passes its output in.
+for s in steps:
+    u = str(s.get("uses", ""))
+    if u.startswith("./") or u.startswith("../"):
+        bad.append("install@v1 nests a LOCAL action (uses: %s). Every consumer would fail with "
+                   "\"Can't find 'action.yml'\", and shipyard's CI could never reproduce it -- the "
+                   "calling workflow must run it and pass the result in as an input (R-P1-19)" % u)
 def cmds(pred):
     out = []
     for s in steps:
@@ -239,6 +269,11 @@ if not exports(bld, "SHIPYARD_CMAKE_TREE"):
     bad.append("build mode never exports SHIPYARD_CMAKE_TREE, which is what release.yml packages")
 if not any(re.search(r'^echo "\$b" >> "\$GITHUB_PATH"$', c) for c in bld):
     bad.append("build mode never puts the shipyard-* commands on PATH")
+if not any("inputs.cmake-tree" in c for c in bld):
+    bad.append("build mode never reads the cmake-tree input (R-P1-19)")
+if not any(re.search(r'^\[ -n "\$tree" \] \|\|', c) for c in bld):
+    bad.append("build mode never refuses an empty cmake-tree; it would `cp -R` from nowhere and fail "
+               "somewhere far from the caller that forgot to pass it")
 # The tree goes to packaging UNTOUCHED: package-pkg.sh refuses a --cmake-tree with anything outside
 # bin/doc/man/share, and the build-mode prefix has shipyard installed into it.
 if any(re.search(r'SHIPYARD_CMAKE_TREE="?\$p', c) for c in bld):
