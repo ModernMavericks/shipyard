@@ -632,8 +632,10 @@ its `main` — in the left column, that push is a release.
 
 ## Release notes
 
-- **One generator: `$SHIPYARD_SCRIPTS/release-notes.sh`.** It writes the ONE file that becomes both
-  the Sparkle appcast `<description>` and the GitHub Release body, so the two cannot disagree:
+- **One generator, called directly: `$SHIPYARD_SCRIPTS/release-notes.sh`.** This is now the family
+  shape, not one option among several — every one of the 13 product repos and shipyard itself call it
+  straight from `release.yml`. It writes the ONE file that becomes both the Sparkle appcast
+  `<description>` and the GitHub Release body, so the two cannot disagree:
   ```sh
   sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$TAG" --version "$FULL" \
      --product OpenSSH --min-os 10.9.5 --out dist/RELEASE_NOTES.md
@@ -643,20 +645,115 @@ its `main` — in the left column, that push is a release.
   self-upstream product that is its own upstream). `--min-os` emits the install-floor line — omit it
   for a product that is not a 10.9 `.pkg`. `--line` scopes the baseline for a repo shipping parallel
   lines (golang's `1.26`); it is normalized internally, so both `1.26` and `1.26.*` work.
-  `release-notes-file.sh` forwards it too, from `MAVERICKS_NOTES_LINE` in the environment (its
-  positional signature stays `<TAG> <FULL_VERSION> [PRODUCT_NAME]`, so a line can't be a new argument).
   The generator `cd`s to the repo root before it runs, so **`--out` resolves against the repo root**,
   not the caller's cwd — a relative path from a subdirectory (a `build/` step, say) will not land where
   you typed it; pass an absolute path or one rooted at `$MAVERICKS_ROOT` from anywhere but the root.
+- **`release-notes-file.sh` is now legacy — no product repo calls it.** It was kept as a thin
+  back-compat wrapper (positional `<TAG> <FULL_VERSION> [PRODUCT_NAME]`, `MAVERICKS_NOTES_LINE`
+  forwarded to `--line`) specifically so the repos still on the old signature would get the standard
+  body before each migrated. The per-repo migration (2026-09-12) converted every remaining caller to
+  the direct form above; a repo-wide grep across all 13 product repos plus shipyard finds zero
+  references to `release-notes-file.sh` left. It is not deleted — that is a separate decision — but a
+  new or copied workflow that calls it is drift, not precedent: write the direct call instead.
+- **macho-tools is deliberately out of scope for this migration.** It has no release infrastructure at
+  all (no `release.yml`, no `.pkg`, no updater) to point at the generator; its own plan needs
+  correcting before any release-notes work applies to it.
+- **The per-repo `--product` noun is a DECISION, not a derivation.** The generator can't infer
+  register or brand from a bare upstream name, so each repo's choice is recorded here — read it before
+  re-litigating "Linux 1Password" or "Container Tools":
+
+  | Repo | `--product` | Why, where not obvious |
+  |---|---|---|
+  | openssh | `OpenSSH` | |
+  | 1password | `Linux 1Password` | Porthole preset — the Linux-ness IS the product |
+  | signal-desktop | `Linux Signal Desktop` | same shape as 1password |
+  | porthole | `Porthole` | self-upstream |
+  | container-tools | `Container Tools` (bare — no "for Mavericks") | its version is `<date>-mavericks.N`, which the generator's title logic reads as the PORT shape (it has a `-mavericks.` axis), and that template already appends " for Mavericks" itself — passing the longer descriptor would double it |
+  | clang | `Clang` | |
+  | golang | `Go` | |
+  | macports-legacy-support | `MacPorts legacy-support` | |
+  | ed25519 | `ed25519` (lowercase) | upstream's own spelling |
+  | tailscale | `Tailscale` | |
+  | swift-toolchain | `Swift Toolchain` | decided; ships no floored end-user `.pkg` (mirrors swift.org's build environment) |
+  | swift-runtime | `Swift` | |
+  | magic-trackpad2 | `Mavericks Trackpad 2` | genuinely self-upstream (`vX.Y.Z`, no `-mavericks.N`) |
+
+  (shipyard itself, a caller but not a "product", passes `Shipyard`.)
+- **`--line` takes upstream's VERSION PREFIX, not the `lines/<id>/` directory name.** golang's line
+  directory is `lines/126/`, but its release tags are `1.26.7-mavericks.N`, so `--line` must be `1.26`
+  (derived in `release.yml` as `printf '%s' "$VER" | cut -d. -f1,2`) — the bare `126` matches nothing
+  against `previous-release-tag.sh`'s glob (it compares to real tags like `1.26.*-mavericks.*`), which
+  silently drops both the `### Build ingredients` section and the compare link while
+  `check-release-notes.sh`'s shape check still passes (a title and a `### What changed` are still
+  there). clang's `--line 22` (`${CLANG_LINE:-22}`) is correct only because its own tags happen to
+  start `22.1.1-…` — the directory name and the version prefix coincide there by chance, not by rule.
+  This bit the migration plan itself before it was corrected against the real tags; verify a line's
+  actual tag shape, never assume it matches its directory name.
+- **`--min-os` must describe what the shipped `.pkg` actually declares, verified against the artifact
+  — not assumed from a survey.** A survey got this wrong twice before each repo's real build was
+  checked. As migrated:
+
+  | `--min-os` passed | Repos |
+  |---|---|
+  | `10.9` (bare) | 1password, signal-desktop, porthole |
+  | `10.9.5` | openssh, container-tools, clang, golang, macports-legacy-support, ed25519, tailscale, swift-runtime, magic-trackpad2 |
+  | *(omitted)* — no floored end-user `.pkg` | swift-toolchain, shipyard |
+
+  **Dual-variant repos (clang, golang): the notes' floor line describes the NATIVE `.pkg`, while each
+  appcast enforces its own artifact's real minimum — this split is deliberate, do not "fix" it.** Both
+  repos pass `--min-os 10.9.5` to `release-notes.sh` because that describes the native build, the
+  flagship most users install; their cross variant's own `sign_and_appcast.sh` call separately passes
+  `--min-os 11.0` for its own appcast feed, independent of what the notes say. A golang/clang cross
+  build TARGETS 10.9 but RUNS on 11.0+ (see Artifact conformance, "structure matters more than it
+  looks") — the notes describe one variant, the appcast enforces each variant's own truth, and they
+  are allowed to disagree on purpose.
 - **The shape, in order:** title, the committed `release-notes/<TAG>.md` prose verbatim when present,
   `### What changed`, `### Build ingredients` when a pin moved, then a footer (the floor line, a
   compare link). Prose stays optional and is never rewritten; a release with none still says what
-  changed — `release-notes-file.sh` is now a thin back-compat wrapper onto the generator, so the six
-  repos still calling its old signature get the standard body before they migrate. **Committed prose
-  must NOT carry its own `## ` title** — the generator emits the title itself and slots the prose
-  verbatim right after it, so a note beginning with `##` produces two titles (golang's committed notes
-  do this today; the family's per-repo `release-notes/README.md` files still describe the old
-  convention where the note supplied its own title — a later plan updates them).
+  changed. **Committed prose must NOT carry its own title** — the generator emits the title itself and
+  slots the prose verbatim right after it, so a note beginning with a heading produces two. **Nine
+  files across five repos still do** (all historical — none is a future release, so nothing is broken
+  today, but a regeneration of one of these exact tags would be a surprise without this list):
+  - container-tools: `20260719-mavericks.1.md`, `20260727-mavericks.1.md`, `20260727-mavericks.2.md` (own `## ` title)
+  - golang: `1.26.4-mavericks.1.md`, `1.26.4-mavericks.2.md`, `1.26.4-mavericks.3.md` (own `## ` title)
+  - clang: `22.1.1-mavericks.1.md` (own `## ` title)
+  - swift-runtime: `6.3.3-mavericks.1.md` (own `## ` title)
+  - swift-toolchain: `6.3.3-mavericks.1.md` (own `# ` title — one level off, same defect)
+
+  The family's per-repo `release-notes/README.md` files still describe the old convention where the
+  note supplied its own title; a later plan updates them.
+- **Three generator defects surfaced by this migration's family sweep, fixed before any product push**
+  (`f54a0cd`, `a566a06`, `26d6139`): `ingredient-notes.sh` dispatched per-key vs. opaque-blob rendering
+  by filename extension (`*.sh`), so a `KEY=VALUE` pin file under any other name (swift-toolchain's
+  `pins.env`) fell into the byte-delta fallback and reported a rewritten DERIVED expression as an
+  ingredient move that never happened; `ingredient-pins.sh` understood only a whole-path
+  `own-upstream-paths` entry, so `repackage-decision.sh`'s `path:KEY` form (`pins.env:SWIFT_VERSION`)
+  was silently ignored there, leaving the repackage trigger and the release notes free to disagree on
+  the swift repos' own-upstream bump; and the footer's `---` rule printed even with nothing after it.
+  Switching the first defect's dispatch from extension to content (does this file contain a
+  `KEY=VALUE` line?) then needed two more review rounds to hold: an uppercase-only key class still
+  matched a base64 CA-bundle padding line (`MK9=`) as a one-line "assignment", which would have
+  published base64 fragments as a build ingredient on golang's next CA-bundle refresh had the first
+  round shipped alone — caught before it ever reached a real release. **The shape worth remembering:
+  two scripts were answering the same question differently** — `repackage-decision.sh` decides
+  whether a pin is the repo's own upstream, and `ingredient-pins.sh` had to re-derive that same answer
+  from the same YAML and, until this fix, got it wrong. A future split of "decide X" from "act on X
+  already decided" needs one shared decision, never two independent parses of the same input.
+- **Deliberately deferred — named here so they read as decisions, not gaps:**
+  - `previous-release-tag.sh`'s baseline glob is hardcoded to `*-mavericks.*`, so a self-upstream repo
+    whose tags never contain that substring — shipyard (`vX.Y.Z`), porthole (`YYYYMMDD.N`),
+    magic-trackpad2 (`vX.Y.Z`) — finds no baseline tag and gets neither a compare link nor a
+    `### Build ingredients` section, even where a real one exists: porthole has four Renovate-tracked
+    ingredient pins (skalibs, s6, the Debian base image, xpra — see its `INGREDIENTS.md`) that its own
+    generated notes can therefore never name.
+  - swift-runtime's `build.sh` carries three pins that used to be literal `KEY=VALUE` lines and are
+    now DERIVED expressions (`SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"`, and the
+    `BUILDSUPPORT_ASSET` / `TOOLCHAIN_ASSET` filenames built from the same pins). The literal-only
+    per-key diff (see "Say which ingredient moved" above) correctly excludes them going forward, but
+    reads their disappearance from the literal form as *removed* rather than as "never a literal to
+    begin with" — three stale "removed" bullets. Same defect family as the `pins.env` false-positive
+    above (a content-shape the sniffer doesn't yet recognize), left untouched here because it
+    under-reports rather than over-claims, which is the lower-severity direction of that bug class.
 - **Every gap is FATAL, and names its cause.** Notes used to be prose that must never fail a release,
   so every generated fragment was appended with `|| true` and `2>/dev/null` — which meant a broken
   hook, an unreadable pin, or a shallow checkout produced a *shorter* body and a green run. openssh
@@ -1149,9 +1246,23 @@ it here.** A silently dropped increment is how the family drifted in the first p
       `check-family-conventions.sh` (check 12) fails a repo that signs without the job. compat is
       exempt by omission: it is not on GitHub
 - [x] One release-notes generator for the family (`release-notes.sh`), one shape, gaps fatal rather
-      than silent — done 2026-09-11. Per-repo migration (13 repos, swift-runtime first) and the three
-      enforcement layers (conventions-gate check, publisher body-shape validation, artifact-conformance
-      appcast-vs-body agreement) follow as separate plans
+      than silent — done 2026-09-11
+- [x] Per-repo migration onto the generator (13 product repos plus shipyard itself, swift-runtime
+      first) — done 2026-09-12. Every `release.yml` in the family now calls `release-notes.sh`
+      directly; `release-notes-file.sh` is legacy, with zero remaining callers. See Release notes,
+      above, for the per-repo `--product`/`--line`/`--min-os` decisions this migration recorded, the
+      three generator defects it found and fixed, and what it deliberately left deferred
+- [ ] **The three enforcement layers** (a conventions-gate check that a repo actually calls the
+      generator; publisher body-shape validation; artifact-conformance appcast-vs-body agreement) —
+      not yet designed, follow as a separate plan
+- [ ] `previous-release-tag.sh`'s baseline glob (`*-mavericks.*`) excludes every self-upstream repo
+      (shipyard, porthole, magic-trackpad2) from a compare link and a `### Build ingredients` section
+      — deferred during the per-repo migration; named here so it is findable (Release notes,
+      "Deliberately deferred")
+- [ ] swift-runtime's `build.sh` has three pins (`SWIFT_TAG`, `BUILDSUPPORT_ASSET`,
+      `TOOLCHAIN_ASSET`) that read as falsely *removed* now that they are derived expressions rather
+      than literals — same defect family as the `pins.env` false-positive fixed in this migration
+      (`f54a0cd`), left alone because it under-reports rather than over-claims
 - [ ] **North star, not yet designed:** should a product repo carry build machinery at all? One
       declarative config per repo (upstream, verification, binaries, ingredients, updater) that
       shipyard turns into the build, package, release, and checks — a repo that cannot express a
