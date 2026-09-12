@@ -81,3 +81,54 @@ p="$(cd "$w2" && MAVERICKS_ROOT="$w2" sh "$here/../scripts/release-notes-file.sh
 sh "$here/../scripts/check-release-notes.sh" "$p" 9.9p2-mavericks.1 >/dev/null \
   || { echo "FAIL delegate: wrapper output is not the family shape"; cat "$p"; exit 1; }
 rm -rf "$w2"
+
+# --- MAVERICKS_NOTES_LINE forwards to the generator's --line -- the wrapper's only call path, so a
+# parallel-lines repo (golang: lines/126/) gets baseline scoping there too. Unset must add no --line
+# (today's behavior, unaffected); set must scope the baseline to that line, not the numerically-highest
+# tag across every line.
+lw="$(mktemp -d "${TMPDIR:-/tmp}/rnf-line.XXXXXX")"
+( cd "$lw" && git init -q -b main . && git config user.email t@example.com && git config user.name tester \
+    && mkdir -p build && printf '1.26.7\n' > UPSTREAM_VERSION \
+    && printf '#!/bin/sh\nprintf "https://go.dev/doc/devel/release#go%%s\\n" "$1"\n' > build/upstream-release-notes-url.sh \
+    && git add -A && git commit -qm base \
+    && git tag 1.26.5-mavericks.1 && git tag 1.27.0-mavericks.1 )
+
+# unset: no --line reaches the generator, so the baseline is the numerically highest tag across ALL
+# lines (1.27.0) -- the bug this fix closes on the path six repos actually call.
+p="$(cd "$lw" && MAVERICKS_ROOT="$lw" GITHUB_SERVER_URL=https://github.com \
+    GITHUB_REPOSITORY=ModernMavericks/mavericks-golang \
+    sh "$here/../scripts/release-notes-file.sh" 1.26.7-mavericks.1 1.26.7-mavericks.1 Go 2>/dev/null)"
+grep -q 'was 1.27.0' "$p" \
+  || { echo "FAIL line: unset MAVERICKS_NOTES_LINE should leave --line unscoped (baseline 1.27.0)"; cat "$p"; exit 1; }
+rm -f "$p"
+
+# set: --line reaches the generator, scoping the baseline to the 1.26 line.
+p="$(cd "$lw" && MAVERICKS_ROOT="$lw" MAVERICKS_NOTES_LINE=1.26 \
+    GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=ModernMavericks/mavericks-golang \
+    sh "$here/../scripts/release-notes-file.sh" 1.26.7-mavericks.1 1.26.7-mavericks.1 Go 2>/dev/null)"
+grep -q 'was 1.26.5' "$p" \
+  || { echo "FAIL line: MAVERICKS_NOTES_LINE=1.26 should scope baseline to 1.26.5"; cat "$p"; exit 1; }
+grep -q '1.27.0' "$p" \
+  && { echo "FAIL line: must not pick the newer 1.27.0 line as baseline"; cat "$p"; exit 1; }
+rm -f "$p"
+rm -rf "$lw"
+
+echo "PASS: release-notes-file (--line pass-through)"
+
+# --- a generator fatal must not leak the wrapper's mktemp'd file -----------------------------------
+# The wrapper creates its temp file BEFORE calling the generator; with no trap, a generator die() (any
+# of the many fatal gaps release-notes.sh now enforces) left a zero-byte temp file behind forever.
+tw="$(mktemp -d "${TMPDIR:-/tmp}/rnf-trap.XXXXXX")"
+nogit="$tw/nogit-root"; mkdir -p "$nogit"
+if ( cd "$nogit" && MAVERICKS_ROOT="$nogit" TMPDIR="$tw" \
+       sh "$here/../scripts/release-notes-file.sh" 9.9p2-mavericks.1 9.9p2-mavericks.1 OpenSSH \
+     ) >/dev/null 2>"$tw/err.log"; then
+  echo "FAIL trap: generator should have failed (MAVERICKS_ROOT is not a git repo)"; exit 1
+fi
+grep -qi 'shallow\|git' "$tw/err.log" || { echo "FAIL trap: unexpected failure cause"; cat "$tw/err.log"; exit 1; }
+leaked="$(find "$tw" -maxdepth 1 -type f -name 'release-notes-file.*' | wc -l | tr -d ' ')"
+[ "$leaked" = 0 ] \
+  || { echo "FAIL trap: generator failure leaked a wrapper temp file"; find "$tw" -maxdepth 1 -type f; exit 1; }
+rm -rf "$tw"
+
+echo "PASS: release-notes-file (mktemp trap)"

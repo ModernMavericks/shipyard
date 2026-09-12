@@ -82,7 +82,13 @@ if [ "$SELF_UPSTREAM" = no ]; then
   fi
 fi
 
-PREV="$(sh "$SELF/previous-release-tag.sh" "$TAG" ${LINE:+"$LINE"} || true)"
+# An EMPTY result is legitimate (a genuine first release has no baseline); a NON-ZERO exit is not --
+# that is previous-release-tag.sh itself failing (e.g. an unreadable tag list), and swallowing it here
+# is exactly the "shorter body, green run" shape this generator exists to stop: no baseline means no
+# ingredient section and no compare link, silently, for a release that may well have both.
+PREV="$(sh "$SELF/previous-release-tag.sh" "$TAG" ${LINE:+"$LINE"})" && prevrc=0 || prevrc=$?
+[ "$prevrc" -eq 0 ] \
+  || die "previous-release-tag.sh failed (exit $prevrc) for $TAG; cannot decide the compare baseline or whether an ingredient moved without it"
 
 tmp="$(mktemp "${TMPDIR:-/tmp}/release-notes.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
@@ -182,7 +188,7 @@ if [ "$SELF_UPSTREAM" = yes ]; then
   printf -- '- Release of %s %s.\n' "$PRODUCT" "$VER" >> "$tmp"
 else
   set +e
-  URL="$(sh "$SELF/upstream-notes.sh" --url-only "$VER" 2>/dev/null)"; urc=$?
+  URL="$(sh "$SELF/upstream-notes.sh" --url-only "$VER")"; urc=$?
   set -e
   case "$urc" in
     0)

@@ -51,7 +51,7 @@ awk '
   /^---[[:space:]]*$/ { if (head != "" && body == 0) { print head; exit 1 } head = ""; body = 0; next }
   /[^[:space:]]/ { body = 1 }
   END { if (head != "" && body == 0) { print head; exit 1 } }
-' "$f" > "$t" 2>/dev/null || {
+' "$f" > "$t" || {
   empty="$(cat "$t" 2>/dev/null || true)"
   fail "section is empty: ${empty:-<unknown>}"
 }

@@ -30,6 +30,29 @@ setup() { SCRIPT="${BATS_TEST_DIRNAME}/../scripts/gen_appcast.sh"; }
   [[ "$output" == *"see [the docs] (later) and <em>em</em>"* ]] || false
 }
 
+@test "render-notes renders the footer's --- thematic break as <hr>, not literal text" {
+  # release-notes.sh always emits a bare '---' line to separate the footer from the body. GitHub
+  # renders that as a horizontal rule; the awk renderer must too, or the two consumers disagree.
+  printf '### What changed\n- Repackage of upstream OpenSSH 9.9p2; packaging changes only.\n\n---\nRequires Mac OS X 10.9.5 or later.\n[All changes since 9.9p2-mavericks.5](https://example.com/compare/a...b)\n' \
+    > "$BATS_TMPDIR/n.md"
+  run sh "$SCRIPT" --render-notes "$BATS_TMPDIR/n.md"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"<hr>"* ]] || false
+  [[ "$output" != *"---"* ]] || false
+  [[ "$output" == *'<p>Requires Mac OS X 10.9.5 or later. <a href="https://example.com/compare/a...b">All changes since 9.9p2-mavericks.5</a></p>'* ]] || false
+  # the footer text must be its OWN <p>, not folded into the preceding "What changed" bullet/paragraph
+  [[ "$output" != *"packaging changes only. Requires"* ]] || false
+}
+
+@test "render-notes renders a self-upstream's bare trailing --- as <hr>, not <p>---</p>" {
+  # A self-upstream product has no floor line and no compare link, so the footer is JUST the rule.
+  printf '### What changed\n- Release of Porthole 20260802.6.\n\n---\n' > "$BATS_TMPDIR/n.md"
+  run sh "$SCRIPT" --render-notes "$BATS_TMPDIR/n.md"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"<hr>"* ]] || false
+  [[ "$output" != *"<p>---</p>"* ]] || false
+}
+
 @test "channel title is parameterized" {
   printf 'notes\n' > "$BATS_TMPDIR/n.md"
   run sh "$SCRIPT" "My Product" "1.2.3" "http://x/y.pkg" "10.9.5" "$BATS_TMPDIR/n.md" 'length="1"'

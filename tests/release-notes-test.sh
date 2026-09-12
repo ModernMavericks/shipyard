@@ -395,6 +395,28 @@ i="$(grep -n '### Build ingredients' "$r/OUT.md" | cut -d: -f1)"
 [ -n "$u" ] && [ -n "$i" ] && [ "$u" -lt "$i" ] \
   || { echo "FAIL combo: upstream content should precede ingredients"; cat "$r/OUT.md"; exit 1; }
 
+# --- FATAL: previous-release-tag.sh itself failing must not read as "no baseline" -------------------
+# The only remaining `|| true` on a fact-bearing call: a nonzero exit from previous-release-tag.sh
+# (e.g. it cannot list tags) used to be swallowed into PREV="", which reads exactly like a genuine
+# first release -- silently dropping the ingredient section and the compare link on a release that may
+# have both. An EMPTY result must stay legitimate; only a NONZERO exit is fatal, so this stubs the
+# script to fail outright rather than to print nothing.
+r="$work/prevtagfails"; mkrepo "$r"
+( cd "$r" && git tag 9.9p2-mavericks.1 )
+scripts_stub="$work/scripts-stub"
+cp -R "$here/../scripts" "$scripts_stub"
+printf '#!/bin/sh\necho "previous-release-tag.sh: boom, cannot list tags" >&2\nexit 7\n' \
+  > "$scripts_stub/previous-release-tag.sh"
+chmod +x "$scripts_stub/previous-release-tag.sh"
+if ( cd "$r" && MAVERICKS_ROOT="$r" sh "$scripts_stub/release-notes.sh" --tag 9.9p2-mavericks.1 \
+       --version 9.9p2-mavericks.1 --product OpenSSH --out "$r/OUT.md" ) >/dev/null 2>&1; then
+  echo "FAIL prevtagfails: a failing previous-release-tag.sh must be fatal, not read as no baseline"; exit 1
+fi
+prevtag_out="$(cd "$r" && MAVERICKS_ROOT="$r" sh "$scripts_stub/release-notes.sh" --tag 9.9p2-mavericks.1 \
+       --version 9.9p2-mavericks.1 --product OpenSSH --out "$r/OUT.md" 2>&1 || true)"
+printf '%s\n' "$prevtag_out" | grep -qi 'previous-release-tag' \
+  || { echo "FAIL prevtagfails: cause not named: $prevtag_out"; exit 1; }
+
 # --- FATAL: missing required arguments -------------------------------------------------------------
 r="$work/args"; mkrepo "$r"; ( cd "$r" && git tag 9.9p2-mavericks.1 )
 if ( cd "$r" && MAVERICKS_ROOT="$r" sh "$S" --tag 9.9p2-mavericks.1 --version 9.9p2-mavericks.1 \

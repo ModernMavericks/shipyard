@@ -16,6 +16,7 @@
 #   `[text](scheme:url)`    -> <a href="...">text</a>  (upstream-notes.sh links upstream's notes)
 #   `**bold**`              -> <strong>bold</strong>
 #   `*italic*`              -> <em>italic</em>
+#   `---` on its own line   -> <hr>                     (release-notes.sh's footer rule)
 #   blank-line-separated prose (incl. the trailing `Requires...`) -> <p>...</p>
 #
 # <enclosure-attrs> is the `sparkle:edSignature="..." length="..."` string that `sign_update -s <key>
@@ -90,6 +91,7 @@ md_to_html() {
       li = substr(line, 3)
       next
     }
+    line ~ /^---[[:space:]]*$/ { close_block(); print "<hr>"; next }   # thematic break (footer rule)
     {                                                       # prose / continuation line
       sub(/^[[:space:]]+/, "", line)
       if (mode == "ul") { li = li " " line }
