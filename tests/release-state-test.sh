@@ -84,9 +84,18 @@ rc=0; sh "$S" --root "$w/g" >"$w/g.out" 2>&1 || rc=$?
 [ "$rc" = 2 ] || { echo "FAIL no declared state should exit 2, got $rc"; exit 1; }
 grep -q 'Declared state' "$w/g.out" || { echo "FAIL error does not name the section"; exit 1; }
 
-# 12. A malformed declaration propagates as a failure, not as a partial digest.
+# 12. A malformed declaration propagates as a failure, not as a partial digest -- and, like every
+#     other usage-or-declaration error this script detects, that failure is exit 2, not whatever
+#     declared-state.sh itself uses (1).
 mk "$w/h"
 printf '%s\n' '# Build ingredients' '' '## Declared state' '' '- upstream:' > "$w/h/INGREDIENTS.md"
-if sh "$S" --root "$w/h" >/dev/null 2>&1; then echo "FAIL malformed declaration was accepted"; exit 1; fi
+rc=0; sh "$S" --root "$w/h" >/dev/null 2>&1 || rc=$?
+[ "$rc" = 2 ] || { echo "FAIL malformed declaration should exit 2, got $rc"; exit 1; }
+
+# 13. Whitespace around a KEYED pin's value is not part of the value either -- the whole-file path
+#     already trims, and a cosmetic reformat of a pins.env line must not move the digest.
+mk "$w/m"; printf 'CMAKE_VERSION= 4.4.3 \nOTHER=ignored\n' > "$w/m/pins.env"
+got="$(sh "$S" --root "$w/m")"
+[ "$got" = "$GOLD" ] || { echo "FAIL whitespace around a keyed pin changed the digest: $got"; exit 1; }
 
 echo "PASS: release-state"

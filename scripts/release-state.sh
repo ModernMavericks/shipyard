@@ -28,10 +28,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# The value assigned to KEY in FILE, quotes stripped, first match wins -- the same shape
-# repackage-decision.sh reads, so a pin file means one thing to every script in the family.
+# The value assigned to KEY in FILE, quotes and surrounding whitespace stripped, first match wins --
+# the same shape repackage-decision.sh reads, so a pin file means one thing to every script in the
+# family. Trimmed the same way the whole-file path is trimmed: two spellings of the same pin must
+# render identically, or a cosmetic reformat would move the digest.
 pin_value() {  # $1 = file  $2 = key
-  sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1 | sed 's/^"//; s/"$//'
+  sed -n "s/^$2=//p" "$1" 2>/dev/null | head -1 | sed 's/^"//; s/"$//' | tr -d '[:space:]'
 }
 
 _tmp="${TMPDIR:-/tmp}"
@@ -40,7 +42,14 @@ decl="$work/decl"; lines="$work/lines"
 : > "$lines"
 
 # A parse failure must not become a digest, so take the parser's exit status before using its output.
-sh "$SELF/declared-state.sh" "$ROOT" > "$decl"
+# declared-state.sh's own contract is exit 1 on a malformed entry; convert that to release-state's
+# documented exit 2 for any usage-or-declaration error, but keep its message so the author still
+# learns which entry was wrong.
+if ! sh "$SELF/declared-state.sh" "$ROOT" > "$decl" 2>"$work/parse-err"; then
+  cat "$work/parse-err" >&2
+  echo "release-state: $ROOT/INGREDIENTS.md has a malformed \"## Declared state\" declaration" >&2
+  exit 2
+fi
 [ -s "$decl" ] || {
   echo "release-state: $ROOT/INGREDIENTS.md declares no \"## Declared state\"" >&2
   echo "    add the section -- see scripts/declared-state.sh for the grammar:" >&2
