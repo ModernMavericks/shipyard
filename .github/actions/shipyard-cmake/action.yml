@@ -16,7 +16,10 @@ runs:
       id: cache
       with:
         path: ${{ runner.temp }}/shipyard-cmake-tree
-        key: shipyard-cmake-${{ runner.os }}-${{ hashFiles('cmake.pin', 'mavericks-clang.pin', 'patches/cmake/**', 'scripts/build-cmake.sh', 'scripts/lipo-merge-tree.sh') }}
+        # THIS FILE is in the key too: the sysroot, the SDK symlink, the Rosetta install and the
+        # build-cmake.sh invocation all live here, so a change to how the tree is built would
+        # otherwise restore a tree built the old way and look like it worked.
+        key: shipyard-cmake-${{ runner.os }}-${{ hashFiles('cmake.pin', 'mavericks-clang.pin', 'patches/cmake/**', 'scripts/build-cmake.sh', 'scripts/lipo-merge-tree.sh', '.github/actions/shipyard-cmake/action.yml') }}
 
     - if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
