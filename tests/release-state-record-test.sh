@@ -200,8 +200,8 @@ sh "$S" --tag t --digest "$D1" --replace-unreadable --body-file "$w/u20" --out "
   || { echo "FAIL the marker moved: '$(head -1 "$w/n20")'"; exit 1; }
 [ "$(tail -1 "$w/n20")" = "- tail bullet" ] || { echo "FAIL the body's own tail moved"; exit 1; }
 
-# 21. TWO unreadable markers leave ONE readable one. Leaving the second behind would re-block the
-#     next lookup, which is the thing this flag exists to unblock.
+# 21. TWO unreadable markers leave ONE readable one: one marker per body is the invariant, and a
+#     stale unreadable line is litter in notes users read.
 printf 'ModernMavericks-State: v0:a\n\nnotes\n\nModernMavericks-State: v0:b\n' > "$w/u21"
 sh "$S" --tag t --digest "$D1" --replace-unreadable --body-file "$w/u21" --out "$w/n21" >/dev/null
 [ "$(grep -c 'ModernMavericks-State:' "$w/n21")" = 1 ] \

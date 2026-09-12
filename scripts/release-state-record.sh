@@ -127,9 +127,8 @@ if [ -n "$existing" ]; then
   if [ "$REPLACE_UNREADABLE" = yes ] && ! state_digest_readable "$existing"; then
     # The escape release-needed.sh's SKIP=unreadable-marker/<tag> tells you to take. Rewrite the
     # marker LINE where it stands rather than stripping and re-appending, so a body whose marker is
-    # not at the end keeps its shape; every other byte is preserved as always. Any further marker
-    # lines go, because by the time we are here state_marker found no readable one anywhere, so they
-    # are all unreadable -- and leaving one behind would re-block the next lookup.
+    # not at the end keeps its shape; every other byte is preserved as always. One marker per body is
+    # the invariant, and a stale unreadable line is litter in notes users read, so any others go.
     awk -v new="ModernMavericks-State: $DIGEST" '
       /^ModernMavericks-State:/ { if (!seen) { print new; seen = 1 } ; next }
       { print }
