@@ -100,9 +100,13 @@ need(r"^sh scripts/sign_and_appcast\.sh .*--pkg \S+\.pkg\"? > dist/appcast\.xml$
 need(r"^sh scripts/assert_appcast_upgradeable\.sh .*--appcast dist/appcast\.xml .*--tag-glob 'v\*\.\*\.\*'",
      "release.yml must run scripts/assert_appcast_upgradeable.sh on dist/appcast.xml with --tag-glob 'v*.*.*'")
 
-# release-notes-file.sh prints a PATH. The body must be the file's content, and must not be empty.
-need(r"^cp \"\$notes_path\" dist/RELEASE_NOTES\.md$",
-     "release.yml no longer copies the notes FILE (release-notes-file.sh prints a path) into dist/RELEASE_NOTES.md")
+# release-notes.sh is called directly (no wrapper): --out writes the body straight to
+# dist/RELEASE_NOTES.md. shipyard passes no --min-os -- it ships shell scripts and a CMake package,
+# not a 10.9 .pkg install of ITSELF, so the wrapper's hardcoded floor line would have been a lie here.
+need(r"^sh \"\$SHIPYARD_SCRIPTS/release-notes\.sh\" --tag \"v\$v\" --version \"\$v\" --product Shipyard --out dist/RELEASE_NOTES\.md$",
+     "release.yml must call release-notes.sh directly with --product Shipyard --out dist/RELEASE_NOTES.md")
+if any("--min-os" in c for c in find(r"release-notes\.sh")):
+    bad.append("release.yml must not pass --min-os to release-notes.sh -- shipyard is not a 10.9 .pkg of itself")
 need(r"^\[ -s dist/RELEASE_NOTES\.md \] \|\| \{ echo \"::error::release notes came back empty\"; exit 1; \}$",
      "release.yml lost the empty-release-notes guard")
 

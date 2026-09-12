@@ -112,15 +112,15 @@ jobs:
         run: |
           set -eu
           v='${{ steps.ver.outputs.version }}'
-          # Notes are optional per release; the shared helper guarantees a non-empty body, generating
-          # a default when release-notes/<TAG>.md is absent (shipyard has no committed notes, and with
+          # Notes are optional per release; the generator guarantees a non-empty body, generating a
+          # default when release-notes/<TAG>.md is absent (shipyard has no committed notes, and with
           # a release per push it should not grow them for routine changes).
           #
-          # It prints a PATH, not the content. Redirecting its stdout into the notes file would give
-          # the Release a body consisting of a temp-file path -- non-empty, so release-assets.sh would
-          # pass it, and the defect would only be visible on github.com.
-          notes_path="$(MAVERICKS_ROOT="$PWD" sh scripts/release-notes-file.sh "v$v" "$v" "Mavericks Shipyard")"
-          cp "$notes_path" dist/RELEASE_NOTES.md
+          # Called directly (no wrapper, no --min-os): shipyard ships shell scripts and a CMake
+          # package, not a 10.9 .pkg install of ITSELF -- the "Requires Mac OS X 10.9.5 or later"
+          # floor the wrapper hardcoded for every caller was never true for this repo's own release.
+          sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "v$v" --version "$v" \
+            --product Shipyard --out dist/RELEASE_NOTES.md
           [ -s dist/RELEASE_NOTES.md ] || { echo "::error::release notes came back empty"; exit 1; }
 
       - name: Sign + appcast
