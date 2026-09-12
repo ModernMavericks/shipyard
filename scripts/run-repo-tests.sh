@@ -15,8 +15,11 @@ set -eu
 preset="${1:-}"
 
 if [ -n "$preset" ] && [ -f CMakeLists.txt ] && grep -q 'add_test' CMakeLists.txt; then
-  echo "run-repo-tests: ctest --preset $preset"
-  exec ctest --preset "$preset" --output-on-failure
+  # shipyard-ctest, not ctest: the tree under test was configured by shipyard-cmake (the config
+  # refuses any other), so its CTestTestfiles name that cmake's own generator. The pkg puts all three
+  # on the default PATH and install@v1 installs it, so this is available wherever the runner runs.
+  echo "run-repo-tests: shipyard-ctest --preset $preset"
+  exec shipyard-ctest --preset "$preset" --output-on-failure
 fi
 
 [ -d tests ] || { echo "run-repo-tests: no tests/ directory — nothing to run"; exit 0; }

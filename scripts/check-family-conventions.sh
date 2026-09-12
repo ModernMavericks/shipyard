@@ -467,6 +467,94 @@ if bad:
 PY
 fi
 
+# Declared exceptions, read once by the one parser the artifact checker also uses. An entry with no
+# reason fails here: an exception without one is indistinguishable from drift.
+if ! DEVS="$(sh "$SELF/deviations.sh" .)"; then
+  fail "INGREDIENTS.md declares a conformance deviation with no reason" "give every '- <check>[:<glob>]:' entry its reason on the same line"
+fi
+deviated() {  # $1 = check name, $2 = path: 0 if a declared deviation covers it
+  printf '%s\n' "$DEVS" | { while read -r c g _; do
+    [ "$c" = "$1" ] || continue
+    # shellcheck disable=SC2254  # $g is a glob on purpose
+    case "$2" in $g) exit 0;; esac
+  done; exit 1; }
+}
+
+# 14. No CMake user package registry. shipyard is found by shipyard-cmake alone (it lives in the same
+# prefix); a script reading ~/.cmake/packages is reading a file nothing writes any more.
+#
+# tests/ is excluded for the same reason check 16 excludes it: a test that asserts the registry is GONE
+# has to name it. shipyard's own shipyard-release-workflow-test.sh greps its workflows for
+# "cmake/packages" precisely to prove none is left, and a sweep that cannot tell an assertion from a
+# usage would report that proof as the violation. What a repo SHIPS is what is checked.
+# A COMMENT that names the registry is prose, not a read -- the same rule check 16 applies to a
+# commented-out command. Note also what this check's OWN message may not say: spelling the full path
+# in the fail string would make this file match its own pattern, which is how a first draft reported
+# shipyard as the family's worst offender.
+for f in $(git ls-files -- '*.sh' '*.yml' '*.yaml' '*.cmake' 'CMakeLists.txt' '*.bats' 2>/dev/null | grep -v '^tests/'); do
+  # package[s], the `ps | grep [f]oo` idiom: the pattern must not be a literal occurrence of itself,
+  # or this gate is its own first offender. The bracket changes nothing about what it matches.
+  grep -v '^[[:space:]]*#' "$f" 2>/dev/null | grep -q '\.cmake/package[s]' || continue
+  deviated registry-read "$f" && continue
+  fail "$f reads the CMake user package registry (the ~/.cmake export(PACKAGE) tree), which nothing writes any more" \
+       "source msc.sh (it asks shipyard-cmake and exports SHIPYARD_SCRIPTS), or use \$SHIPYARD_SCRIPTS in CI"
+done
+
+# 15. A product's msc.sh is shipyard's canonical template, byte for byte: it is the one piece a product
+# carries to find shipyard, and eleven hand-kept copies had drifted into three variants.
+for f in build/msc.sh msc.sh; do
+  [ -f "$f" ] || continue
+  deviated msc-template "$f" && continue
+  cmp -s "$f" "$SELF/templates/msc.sh" \
+    || fail "$f is not shipyard's canonical msc.sh" "copy it from shipyard: cp \"\$SHIPYARD_SCRIPTS/templates/msc.sh\" $f"
+done
+
+# 16. Configure, test and package with shipyard-cmake / shipyard-ctest / shipyard-cpack.
+# MavericksShipyardConfig.cmake refuses any other cmake at configure time; this finds the call in a
+# PR instead. Command position only, comment lines skipped, tests/ excluded (fixtures quote commands).
+cmdlist="$(mktemp "${TMPDIR:-/tmp}/conventions-cmds.XXXXXX")"
+TAB="$(printf '\t')"
+{
+  if [ -n "$CI_FILES" ] && python3 -c 'import yaml' >/dev/null 2>&1; then
+    # shellcheck disable=SC2086  # deliberate word-split list of paths
+    python3 - $CI_FILES <<'PYEOF'
+import sys, yaml
+for p in sys.argv[1:]:
+    try:
+        wf = yaml.safe_load(open(p)) or {}
+    except Exception:
+        continue          # check 8 owns "this workflow does not parse"; do not report it twice
+    if not isinstance(wf, dict):
+        continue
+    for job in (wf.get("jobs") or {}).values():
+        if not isinstance(job, dict):
+            continue
+        for st in (job.get("steps") or []):
+            if not isinstance(st, dict):
+                continue
+            for line in (st.get("run") or "").splitlines():
+                print("%s\t%s" % (p, line))
+PYEOF
+  fi
+  for f in $(git ls-files -- '*.sh' 2>/dev/null | grep -v '^tests/'); do
+    sed "s|^|$f$TAB|" "$f"
+  done
+} > "$cmdlist"
+while IFS="$TAB" read -r f line; do
+  case "$(printf '%s' "$line" | sed 's/^[[:space:]]*//')" in '#'*|'') continue;; esac
+  # Command position: line start, after a separator (; & |), after then/do/exec, or inside a command
+  # substitution. NOT after a bare `(`. A whole-org survey found three repos whose only hit was the
+  # shape `... || { echo "not built (cmake --build <dir>)"; ... }` -- container-tools, openssh and
+  # swift-runtime each telling a human what to run. Reading an open paren as command position puts a
+  # compliant repo on the migration queue, so a subshell must announce itself some other way (a
+  # `(cd x && cmake ...)` still matches, on the `&`); `$(` stays, because that IS a call.
+  printf '%s\n' "$line" | grep -Eq '(^|[;&|`]|[$]\(|[[:space:]]then|[[:space:]]do|[[:space:]]exec|^then|^do|^exec)[[:space:]]*(cmake|ctest|cpack)([[:space:]]|$)' || continue
+  deviated shipyard-cmake-only "$f" && continue
+  fail "$f runs plain cmake/ctest/cpack: $(printf '%s' "$line" | sed 's/^[[:space:]]*//' | cut -c1-70)" \
+       "use shipyard-cmake / shipyard-ctest / shipyard-cpack -- MavericksShipyardConfig.cmake refuses any other cmake"
+done < "$cmdlist"
+rm -f "$cmdlist"
+
 # LAST, after every check: this line used to sit mid-script, so checks appended below it printed
 # "ok" and then failed in the same run.
 [ "$status" -eq 0 ] && echo "check-family-conventions: ok"
