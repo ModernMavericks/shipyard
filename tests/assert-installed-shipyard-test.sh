@@ -27,6 +27,7 @@
 # (not Rosetta).
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/.." && pwd)"
+. "$here/lib/cmake_fixture.sh"
 S="$root/scripts/assert-installed-shipyard.sh"
 
 real="$(command -v cmake 2>/dev/null)" || { echo "SKIP: no cmake to build a fixture prefix from"; exit 77; }
@@ -61,7 +62,11 @@ fx="$w/root"
 prefix="$fx/usr/local/mavericks-shipyard"
 mkdir -p "$prefix/bin" "$prefix/share" "$fx/usr/local/bin"
 cp "$real" "$prefix/bin/cmake"
-cp -R "$croot" "$prefix/share/$(basename "$croot")"
+# A real, writable tree of the fixture's own -- never the host's, and never a symlink to it. The two
+# ways that goes wrong (Homebrew's CMAKE_ROOT is a symlink AND read-only, and `cp -R` preserves both)
+# are written out in tests/lib/cmake_fixture.sh, which all three fixture-building tests now share;
+# tests/cmake-fixture-test.sh proves it on this box.
+copy_cmake_root "$croot" "$prefix/share/$(basename "$croot")"
 # RELATIVE, exactly as package-pkg.sh writes it: the link must resolve on whatever volume it lands on.
 ln -s ../mavericks-shipyard/bin/cmake "$fx/usr/local/bin/shipyard-cmake"
 # The pkg puts three commands on the default PATH; ctest in particular is what both workflows and
@@ -75,8 +80,13 @@ for c in ctest cpack; do
   fi
   ln -s "../mavericks-shipyard/bin/$c" "$fx/usr/local/bin/shipyard-$c"
 done
-"$real" -S "$root" -B "$w/sb" >/dev/null 2>&1
-HOME="$w/home-install" "$real" --install "$w/sb" --prefix "$prefix" >/dev/null 2>&1
+# Keep the output. Sent to /dev/null, a failure here killed the script under `set -e` having said
+# NOTHING, and CI could only report "FAIL tests/assert-installed-shipyard-test.sh (exit 1)" -- which
+# is what a real macos-26 run did, hiding the read-only-CMAKE_ROOT cause for a whole round.
+"$real" -S "$root" -B "$w/sb" > "$w/configure.log" 2>&1 \
+  || { echo "FAIL: could not configure shipyard for the fixture:"; sed 's/^/    | /' "$w/configure.log"; exit 1; }
+HOME="$w/home-install" "$real" --install "$w/sb" --prefix "$prefix" > "$w/install.log" 2>&1 \
+  || { echo "FAIL: could not install shipyard into the fixture prefix:"; sed 's/^/    | /' "$w/install.log"; exit 1; }
 
 updir="$fx/Library/Application Support/ModernMavericks/MavericksShipyardUpdater.app/Contents/MacOS"
 mkdir -p "$updir"

@@ -10,17 +10,16 @@
 # same prefix.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/.." && pwd)"
+. "$here/lib/cmake_fixture.sh"
 real="$(command -v cmake 2>/dev/null)" || { echo "SKIP: no cmake"; exit 77; }
 w="$(mktemp -d "${TMPDIR:-/tmp}/refusal-test.XXXXXX")"; trap 'rm -rf "$w"' EXIT
 croot="$(printf 'message("${CMAKE_ROOT}")\n' > "$w/r.cmake"; "$real" -P "$w/r.cmake" 2>&1)"
 fx="$w/fx"; mkdir -p "$fx/bin" "$fx/share"
 cp "$real" "$fx/bin/cmake"
-# COPY, don't symlink: Homebrew's CMAKE_ROOT is <prefix>/share/cmake -- the SAME path shipyard is
-# about to be installed into below (--prefix "$fx" -> $fx/share/cmake/MavericksShipyard). A symlink
-# there would alias the fixture's install location straight at the host's real cmake share dir, and
-# the install a few lines down would land INSIDE the host's actual cmake installation instead of the
-# fixture. Copying gives the fixture a real tree of its own that the install can safely merge into.
-cp -R "$croot" "$fx/share/$(basename "$croot")"
+# A real, writable tree of the fixture's own -- never the host's, and never a symlink to it. The two
+# ways that goes wrong, and why the helper exists rather than three copies of these lines, are written
+# out in tests/lib/cmake_fixture.sh; tests/cmake-fixture-test.sh proves it on this box.
+copy_cmake_root "$croot" "$fx/share/$(basename "$croot")"
 # HOME is scratch: until Task 5 removes it, CMakeLists.txt's install(CODE) writes the user package
 # registry under $HOME -- a test must never repoint the real one. Each install gets its OWN scratch
 # HOME (home-fx / home-dev) so their registry entries never collide in one directory; configures run
@@ -28,8 +27,14 @@ cp -R "$croot" "$fx/share/$(basename "$croot")"
 # installed outside the fixture, registered in the REAL user package registry, and CMake's
 # find_package search consults the user registry before it searches a cmake's own install prefix, so
 # an ambient (or colliding) registry entry would silently outrank the fixture/dev copy under test.
-"$real" -S "$root" -B "$w/sb" >/dev/null && HOME="$w/home-fx" "$real" --install "$w/sb" --prefix "$fx" >/dev/null
-HOME="$w/home-dev" "$real" --install "$w/sb" --prefix "$w/dev" >/dev/null      # a second copy: the "dev" one
+# Keep the output: redirected to /dev/null, a failure here kills the script under `set -e` with
+# nothing said, and CI reports a bare "FAIL tests/... (exit 1)" with no way to tell what broke.
+"$real" -S "$root" -B "$w/sb" > "$w/configure.log" 2>&1 \
+  || { echo "FAIL: could not configure shipyard for the fixture:"; sed 's/^/    | /' "$w/configure.log"; exit 1; }
+HOME="$w/home-fx" "$real" --install "$w/sb" --prefix "$fx" > "$w/install-fx.log" 2>&1 \
+  || { echo "FAIL: could not install shipyard into the fixture prefix:"; sed 's/^/    | /' "$w/install-fx.log"; exit 1; }
+HOME="$w/home-dev" "$real" --install "$w/sb" --prefix "$w/dev" > "$w/install-dev.log" 2>&1 \
+  || { echo "FAIL: could not install the second (dev) copy:"; sed 's/^/    | /' "$w/install-dev.log"; exit 1; }
 
 mkdir -p "$w/c"
 printf 'cmake_minimum_required(VERSION 3.16)\nproject(c NONE)\nfind_package(MavericksShipyard REQUIRED)\nmessage(STATUS "DIR=${MavericksShipyard_DIR}")\n' > "$w/c/CMakeLists.txt"
