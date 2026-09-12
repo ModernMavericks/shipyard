@@ -25,6 +25,13 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 bullets="$tmp/bullets"
 : > "$bullets"
+# A key that only became DERIVED (still assigned, no longer a literal) is real information, but it
+# is not evidence that anything actually MOVED -- a pure derive-refactor with no literal pin changed
+# must still print nothing at all (the header contract above). So a "still used, now computed" bullet
+# never opens the section by itself: it is collected separately and appended only when $bullets
+# already holds something a real move put there. See the emission at the bottom of the script.
+derived="$tmp/derived"
+: > "$derived"
 
 # components/golang/version -> "golang"; a patch -> its filename; anything else keeps its path.
 pin_name() {
@@ -66,12 +73,22 @@ bullet() {  # name old new
   printf -- '- **%s**: %s -> %s\n' "$1" "$(shorten "$2")" "$(shorten "$3")" >> "$bullets"
 }
 
-# KEY<TAB>VALUE for each simple assignment, stripped of `export `, quotes, and trailing comment.
-#
-# LITERALS ONLY. A pinned-inputs file also holds derivations (GO_VERSION="$(upstream_version)",
-# PKG_VERSION=`cat VERSION`), and rewriting one of those is a code change, not an ingredient change --
-# reporting it would be noise at best and a false claim at worst. A pin is a literal value, so any
-# value carrying a substitution ($, backtick) is dropped.
+# Raw KEY<TAB>VALUE for every simple assignment line, stripped of `export `, quotes, and trailing
+# comment -- but with NEITHER of the two further questions below applied yet: whether the value is a
+# LITERAL (assignments() only cares about this) and whether the value actually HAS content (both
+# assignments() and assigned_keys() care about this, identically). Factored out once so those two
+# functions read this pipeline the same way and can never drift on what counts as an assignment line
+# in the first place -- see the comment on assignments() for why that drift already bit us once.
+kv_raw() {
+  sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}//; s/^\([A-Z][A-Z0-9_]*\)=\(.*\)$/\1	\2/p' \
+    | sed 's/[[:space:]]*#.*$//; s/["'"'"']//g; s/[[:space:]]*$//'
+}
+
+# KEY<TAB>VALUE for each simple assignment, LITERALS ONLY. A pinned-inputs file also holds
+# derivations (GO_VERSION="$(upstream_version)", PKG_VERSION=`cat VERSION`), and rewriting one of
+# those is a code change, not an ingredient change -- reporting it would be noise at best and a false
+# claim at worst. A pin is a literal value, so any value carrying a substitution ($, backtick) is
+# dropped.
 #
 # The key is restricted to UPPERCASE (the family's own naming convention for every real pin:
 # SWIFT_VERSION, MLS_VERSION, REPO, REF, DIGEST, BASE, ...), not just "starts with a letter": a
@@ -86,10 +103,7 @@ bullet() {  # name old new
 # class, rather than thinning it -- the reviewer measured ~0.46 expected such lines per real
 # CA-bundle refresh at uppercase-only, i.e. even odds of resurrecting this exact false claim again.
 assignments() {
-  sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}//; s/^\([A-Z][A-Z0-9_]*\)=\(.*\)$/\1	\2/p' \
-    | sed 's/[[:space:]]*#.*$//; s/["'"'"']//g; s/[[:space:]]*$//' \
-    | grep -v '[$`]' \
-    | awk -F'\t' '$2 ~ /[^=]/' || true
+  kv_raw | grep -v '[$`]' | awk -F'\t' '$2 ~ /[^=]/' || true
 }
 
 # Every KEY the file ASSIGNS, literal or derived. assignments() drops derived values on purpose --
@@ -97,8 +111,17 @@ assignments() {
 # "not in the build any more" are different facts, and the removal walk below could not tell them
 # apart. swift-runtime's SWIFT_TAG became "swift-${SWIFT_VERSION}-RELEASE", exactly as the family's
 # derive-never-repeat convention requires, and its notes announced the pin as removed.
+#
+# Built from the SAME kv_raw() as assignments(), with the SAME value-has-content guard ($2 ~ /[^=]/)
+# -- not a second, hand-synced parse of the same question. Skipping that guard here would make this
+# function a superset of assignments() by more than the intended $/backtick cases: it would also
+# treat a key emptied to KEY= (or KEY="") as "still assigned" (announcing a real removal as merely
+# "now derived", the same false statement this task exists to delete, pointing the other way), and it
+# would treat a bare base64 padding line ("MK9=") embedded in a KV file as resurrecting a deleted key.
+# A key with an empty or all-"=" value is not "still assigned" any more than assignments() considers
+# it "still a literal".
 assigned_keys() {
-  sed -n 's/^[[:space:]]*export[[:space:]]\{1,\}//; s/^\([A-Z][A-Z0-9_]*\)=.*$/\1/p'
+  kv_raw | awk -F'\t' '$2 ~ /[^=]/ { print $1 }'
 }
 
 # A pin file gets the per-key rendering when it has at least one shell-style KEY=VALUE (or
@@ -202,15 +225,16 @@ for arg in "$@"; do
         # A key that stopped being pinned is a real change to what this product is built from, and
         # walking only the new file would omit it entirely. But it stopped being pinned only if the
         # file stopped assigning it at all -- a key still assigned, just no longer as a literal, is
-        # derived now, which is a different (and much smaller) fact.
+        # derived now, which is a different (and much smaller) fact, and it does not by itself count
+        # as a pin having MOVED (see $derived above).
         assigned_keys < "$path" | sort -u > "$tmp/newkeys"
         while IFS= read -r line; do
           key="${line%%	*}"; oldv="${line#*	}"
           [ "$key" = "$exclkey" ] && continue
           grep -q "^$key	" "$tmp/new" && continue     # still a literal: already handled above
           if grep -q "^$key\$" "$tmp/newkeys"; then
-            printf -- '- **%s%s**: now derived (was %s)\n' \
-              "$label_prefix" "$key" "$(shorten "$oldv")" >> "$bullets"
+            printf -- '- **%s%s**: still used, now computed rather than pinned (was %s)\n' \
+              "$label_prefix" "$key" "$(shorten "$oldv")" >> "$derived"
           else
             printf -- '- **%s%s**: removed\n' "$label_prefix" "$key" >> "$bullets"
           fi
@@ -228,7 +252,10 @@ for arg in "$@"; do
   esac
 done
 
+# A "still used, now computed" bullet never opens this section by itself -- see $derived above --
+# so it only ever rides along once a REAL move already earned the section.
 if [ -s "$bullets" ]; then
   printf '### Build ingredients\n\nChanged since %s:\n\n' "$prev"
   cat "$bullets"
+  cat "$derived"
 fi

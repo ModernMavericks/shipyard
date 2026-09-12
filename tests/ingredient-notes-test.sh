@@ -394,8 +394,8 @@ SH
 out="$(sh "$S" base versions.sh)"
 printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_VERSION\*\*: 6.3.3 -> 6.3.4' \
   || { echo "FAIL derived: a moved literal is still reported as a move: $out"; exit 1; }
-printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_TAG\*\*: now derived (was swift-6.3.3-RELEASE)' \
-  || { echo "FAIL derived: literal -> derived must say derived, not removed: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_TAG\*\*: still used, now computed rather than pinned (was swift-6.3.3-RELEASE)' \
+  || { echo "FAIL derived: literal -> derived must say still-used/computed, not removed: $out"; exit 1; }
 printf '%s\n' "$out" | grep -q 'SWIFT_TAG.*removed' \
   && { echo "FAIL derived: SWIFT_TAG is still assigned; calling it removed is false: $out"; exit 1; }
 printf '%s\n' "$out" | grep -qx -- '- \*\*GONE\*\*: removed' \
@@ -403,5 +403,150 @@ printf '%s\n' "$out" | grep -qx -- '- \*\*GONE\*\*: removed' \
 printf '%s\n' "$out" | grep -q 'LLVM_BRANCH' \
   && { echo "FAIL derived: an unchanged key must produce no bullet: $out"; exit 1; }
 cd "$work"; rm -rf "$work10"
+
+# --- the now-derived bullet must still carry the component-name prefix --------------------------
+# CRITICAL2 (above) already guards the moved and added forms of a components/*/version bullet against
+# shipping unprefixed; the now-derived form is the only other bullet shape that pin file can produce,
+# and it shipped without the same guard. DIGEST moves for real (so the section opens at all); REF
+# becomes derived and must still read "widget / REF", not a bare "REF".
+work11="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work11"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+mkdir -p components/widget
+cat > components/widget/version <<'SH'
+REPO=https://github.com/example/widget.git
+REF=v1.2.3
+DIGEST=deadbeef
+SH
+git add -A; git commit -qm base; git tag base
+cat > components/widget/version <<'SH'
+REPO=https://github.com/example/widget.git
+REF="$(cat REF_PIN)"
+DIGEST=cafebabe
+SH
+out="$(sh "$S" base components/widget/version)"
+printf '%s\n' "$out" | grep -qx -- '- \*\*widget / DIGEST\*\*: deadbeef -> cafebabe' \
+  || { echo "FAIL label-prefix: real move missing: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*widget / REF\*\*: still used, now computed rather than pinned (was v1.2.3)' \
+  || { echo "FAIL label-prefix: derived bullet is missing its component-name prefix: $out"; exit 1; }
+cd "$work"; rm -rf "$work11"
+
+# --- exclkey (the "path:KEY" own-upstream exclusion) must suppress the DERIVED branch too --------
+# The removal walk's exclkey skip was already proven for the "removed" branch (G2 above); the newly
+# split "now derived" branch is a second place the same skip can be silently dropped. SWIFT_VERSION is
+# this repo's own upstream (excluded); it becomes derived here and must still not appear at all.
+work12="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work12"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+printf 'SWIFT_VERSION="6.3.3"\nLLVM_SHA="aaaa"\n' > pins.env
+git add -A; git commit -qm base; git tag base
+printf 'SWIFT_VERSION="$(cat VERSION_FILE)"\nLLVM_SHA="bbbb"\n' > pins.env
+out="$(sh "$S" base pins.env:SWIFT_VERSION)"
+printf '%s\n' "$out" | grep -q 'SWIFT_VERSION' \
+  && { echo "FAIL exclkey-derived: own-upstream key leaked on the derived branch: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*LLVM_SHA\*\*: aaaa -> bbbb' \
+  || { echo "FAIL exclkey-derived: real ingredient key in the same file was dropped: $out"; exit 1; }
+cd "$work"; rm -rf "$work12"
+
+# ...and the REMOVED branch, for the same exclkey, so the two branches cannot silently disagree.
+work13="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work13"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+printf 'SWIFT_VERSION="6.3.3"\nLLVM_SHA="aaaa"\n' > pins.env
+git add -A; git commit -qm base; git tag base
+printf 'LLVM_SHA="bbbb"\n' > pins.env
+out="$(sh "$S" base pins.env:SWIFT_VERSION)"
+printf '%s\n' "$out" | grep -q 'SWIFT_VERSION' \
+  && { echo "FAIL exclkey-removed: own-upstream key leaked on the removed branch: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*LLVM_SHA\*\*: aaaa -> bbbb' \
+  || { echo "FAIL exclkey-removed: real ingredient key in the same file was dropped: $out"; exit 1; }
+cd "$work"; rm -rf "$work13"
+
+# --- the now-derived bullet's OLD value must still be shortened, like every other hash-shaped pin ---
+# TOOLCHAIN_SHA moves from a 40-char hex literal to a derived expression; OTHER_KEY moves for real (so
+# the section opens). The 40-char old value must render as shorten() would for any other hash pin.
+work14="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work14"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+cat > build.sh <<'SH'
+TOOLCHAIN_SHA=3ff344e30b9b1ed2971044eabb438a08f2e2245
+OTHER_KEY=1
+SH
+git add -A; git commit -qm base; git tag base
+cat > build.sh <<'SH'
+TOOLCHAIN_SHA="$(cat TOOLCHAIN_SHA_FILE)"
+OTHER_KEY=2
+SH
+out="$(sh "$S" base build.sh)"
+printf '%s\n' "$out" | grep -qx -- '- \*\*OTHER_KEY\*\*: 1 -> 2' \
+  || { echo "FAIL shorten-derived: real move missing: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*TOOLCHAIN_SHA\*\*: still used, now computed rather than pinned (was 3ff344e30b9b...)' \
+  || { echo "FAIL shorten-derived: the derived bullet's old hex value was not shortened: $out"; exit 1; }
+cd "$work"; rm -rf "$work14"
+
+# --- RULING E: a derive-only refactor (no pin actually moved) must print NOTHING at all ----------
+# This script's own header contract says "Prints NOTHING when no pin moved" -- a "still used, now
+# computed" bullet is real information about a key, but it is not evidence that anything MOVED, so it
+# must never open the "### Build ingredients" section by itself. Only SWIFT_TAG changes shape here;
+# SWIFT_VERSION (the only literal) is untouched, so nothing actually moved.
+work15="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work15"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+cat > versions.sh <<'SH'
+SWIFT_VERSION=6.3.3
+SWIFT_TAG=swift-6.3.3-RELEASE
+SH
+git add -A; git commit -qm base; git tag base
+cat > versions.sh <<'SH'
+SWIFT_VERSION=6.3.3
+SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"
+SH
+out="$(sh "$S" base versions.sh)"
+[ -z "$out" ] \
+  || { echo "FAIL ruling-E: a derive-only refactor must print nothing at all: $out"; exit 1; }
+
+# ...but once a REAL pin also moves in the same release, the section opens and carries BOTH bullets.
+cat > versions.sh <<'SH'
+SWIFT_VERSION=6.3.4
+SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"
+SH
+out="$(sh "$S" base versions.sh)"
+printf '%s\n' "$out" | grep -qx -- '### Build ingredients' \
+  || { echo "FAIL ruling-E: a real move must still open the section: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_VERSION\*\*: 6.3.3 -> 6.3.4' \
+  || { echo "FAIL ruling-E: the real-move bullet is missing: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_TAG\*\*: still used, now computed rather than pinned (was swift-6.3.3-RELEASE)' \
+  || { echo "FAIL ruling-E: the derived bullet must still ride along once the section is open: $out"; exit 1; }
+cd "$work"; rm -rf "$work15"
+
+# --- FINDING 1: assigned_keys() must share assignments()'s value-has-content guard ---------------
+# assigned_keys() answers "is this key still assigned at all", and it MUST agree with assignments()
+# on what counts as an assignment line in the first place, or the two functions drift on the exact
+# question this task is about. A key emptied to KEY= (or KEY="") is not "still assigned" just because
+# a bare `KEY=` line matches the sed pattern -- it is GONE, identically to a line disappearing
+# outright. Without the guard, CA_SHA256 going from a real hash to CA_SHA256= renders a false "still
+# used, now computed rather than pinned" bullet instead of "removed" -- the same false claim this
+# whole task exists to delete, now pointing the other way. SWIFT_VERSION moves for real so the
+# section opens.
+work16="$(mktemp -d "${TMPDIR:-/tmp}/ingredient-notes-tes.XXXXXX")"; cd "$work16"
+git init -q -b main .
+git config user.email t@example.com; git config user.name tester
+cat > versions.sh <<'SH'
+SWIFT_VERSION=6.3.3
+CA_SHA256=3ff344e30b9b1ed2971044eabb438a08f2e2245ddb5f8ab1a3ad8b63ab4eaf91
+SH
+git add -A; git commit -qm base; git tag base
+cat > versions.sh <<'SH'
+SWIFT_VERSION=6.3.4
+CA_SHA256=
+SH
+out="$(sh "$S" base versions.sh)"
+printf '%s\n' "$out" | grep -qx -- '- \*\*SWIFT_VERSION\*\*: 6.3.3 -> 6.3.4' \
+  || { echo "FAIL guard: real move missing: $out"; exit 1; }
+printf '%s\n' "$out" | grep -qx -- '- \*\*CA_SHA256\*\*: removed' \
+  || { echo "FAIL guard: a key emptied to KEY= must still say removed: $out"; exit 1; }
+printf '%s\n' "$out" | grep -q 'CA_SHA256.*still used' \
+  && { echo "FAIL guard: a key with no real value was falsely reported as still assigned/derived: $out"; exit 1; }
+cd "$work"; rm -rf "$work16"
 
 echo "PASS: ingredient-notes"
