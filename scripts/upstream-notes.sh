@@ -35,15 +35,15 @@ bail() {  # $1 = --url-only exit code, $2 = message
   echo "upstream-notes: $2" >&2; exit "$1"
 }
 
-# build/ where a repo keeps its scripts there, scripts/ where it keeps them there (the swift repos) --
-# the same two homes derive-upstream-version.sh already has.
-hook=""
-for d in build scripts; do
-  if [ -f "$MAVERICKS_ROOT/$d/upstream-release-notes-url.sh" ]; then
-    hook="$MAVERICKS_ROOT/$d/upstream-release-notes-url.sh"; break
-  fi
-done
-[ -n "$hook" ] || bail 4 "no build/ or scripts/upstream-release-notes-url.sh in $MAVERICKS_ROOT"
+# WHETHER A LINK IS DUE IS DECIDED BEFORE WHERE IT WOULD COME FROM. These are independent questions
+# -- "did this release change the upstream?" is answered by the tags alone -- and resolving the hook
+# first conflated them: a repo with no hook reported 4 ("no hook") for EVERY release, including the
+# Nth repackage of an upstream that N-1 earlier releases already shipped. Callers act on that code, so
+# a hookless repo's repackage was either refused outright (a release that owes no link blocked for
+# want of the hook that would produce one) or, where INGREDIENTS.md declared a reason, published green
+# with "New upstream: X" over a release that changed no upstream at all. The fleet preview found three
+# repos in exactly that state. A repackage is due no link from anywhere, so it never needs to know
+# whether a hook exists; only a genuine new upstream does, and it still gets 4 when there is none.
 
 # Tags we cannot see must not read as "no earlier release", or every repackage gets called new. A
 # shallow clone has none (the family's release jobs use fetch-depth: 0 for exactly this), and a git
@@ -57,6 +57,17 @@ fi
 for t in $tags; do
   [ "$t" = "$ver" ] || bail 3 "$ver is a repackage of $up; no upstream link is due"
 done
+
+# Only a new upstream reaches here, so only a new upstream can be missing a hook.
+# build/ where a repo keeps its scripts there, scripts/ where it keeps them there (the swift repos) --
+# the same two homes derive-upstream-version.sh already has.
+hook=""
+for d in build scripts; do
+  if [ -f "$MAVERICKS_ROOT/$d/upstream-release-notes-url.sh" ]; then
+    hook="$MAVERICKS_ROOT/$d/upstream-release-notes-url.sh"; break
+  fi
+done
+[ -n "$hook" ] || bail 4 "no build/ or scripts/upstream-release-notes-url.sh in $MAVERICKS_ROOT"
 
 if ! url="$(cd "$MAVERICKS_ROOT" && sh "$hook" "$up")"; then
   bail 5 "$hook failed for $up; omitting the upstream section"

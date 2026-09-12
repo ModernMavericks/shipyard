@@ -108,6 +108,44 @@ printf 'No upstream release notes: upstream publishes none.\n' > "$r/INGREDIENTS
 ( cd "$r" && git add -A && git commit -qm declare )
 gen "$r" 9.9p2-mavericks.1 >/dev/null || { echo "FAIL nohook+declared: should pass"; exit 1; }
 
+# --- a repo with NO hook can still be publishing a repackage, and a repackage is due no link -------
+# Whether this repo owns an upstream-notes hook and whether this RELEASE is even due an upstream link
+# are independent questions, and the second is answerable from the tags alone. Resolving the hook
+# first conflated them: every hookless repo reported "new upstream" regardless of its tags, so
+# the fleet preview found 1password's -mavericks.2, swift-toolchain's -mavericks.4 and
+# container-tools' -mavericks.23 -- all of them the Nth repackage of an upstream already shipped N-1
+# times -- classified as brand-new upstreams. That surfaced two ways, and both fixtures below are
+# needed because each is invisible from the other's side:
+#
+#   without a declared reason -> a FALSE REFUSAL. A legitimate repackage cannot be published at all,
+#   and the error demands a hook for an upstream link this release was never owed. (1password,
+#   swift-toolchain)
+#
+#   with a declared reason -> WORSE: a green run whose body asserts "New upstream: X" over a release
+#   that changed no upstream at all. A false claim in the GitHub Release and in the Sparkle dialog a
+#   10.9 user reads, at exit 0. (container-tools)
+#
+# The existing nohook cases above cannot catch either: both publish -mavericks.1, where "no other tag
+# of this upstream exists" makes new-upstream the correct answer and the ordering unobservable.
+r="$work/nohook-repack"; mkrepo "$r"; rm "$r/build/upstream-release-notes-url.sh"
+( cd "$r" && git add -A && git commit -qm nohook && git tag 9.9p2-mavericks.1 \
+    && echo x >> README.md && git add -A && git commit -qm "ci: unrelated" && git tag 9.9p2-mavericks.2 )
+gen "$r" 9.9p2-mavericks.2 >/dev/null \
+  || { echo "FAIL nohook-repack: a repackage is due no upstream link, so a missing hook must not block it"; exit 1; }
+grep -q 'Repackage of upstream OpenSSH 9.9p2' "$r/OUT.md" \
+  || { echo "FAIL nohook-repack: kind"; cat "$r/OUT.md"; exit 1; }
+grep -q 'New upstream' "$r/OUT.md" \
+  && { echo "FAIL nohook-repack: claims a new upstream over an upstream already shipped"; cat "$r/OUT.md"; exit 1; }
+
+# ...and the declared-reason variant must not turn that false claim into a GREEN one.
+printf 'No upstream release notes: upstream publishes none.\n' > "$r/INGREDIENTS.md"
+( cd "$r" && git add -A && git commit -qm declare )
+gen "$r" 9.9p2-mavericks.2 >/dev/null || { echo "FAIL nohook-repack+declared: should pass"; exit 1; }
+grep -q 'Repackage of upstream OpenSSH 9.9p2' "$r/OUT.md" \
+  || { echo "FAIL nohook-repack+declared: kind"; cat "$r/OUT.md"; exit 1; }
+grep -q 'New upstream' "$r/OUT.md" \
+  && { echo "FAIL nohook-repack+declared: a declared reason must not license a false new-upstream claim"; cat "$r/OUT.md"; exit 1; }
+
 # --- FATAL: a shallow clone hides the tags, so the kind cannot be decided --------------------------
 # The assertion checks the MESSAGE, not just a nonzero exit: with the shallow guard removed, this
 # fixture still exits 1 (via upstream-notes.sh's own shallow-clone bail, mapped to the catch-all die),
