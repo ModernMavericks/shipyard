@@ -116,11 +116,12 @@ jobs:
           # default when release-notes/<TAG>.md is absent (shipyard has no committed notes, and with
           # a release per push it should not grow them for routine changes).
           #
-          # Called directly (no wrapper, no --min-os): shipyard ships shell scripts and a CMake
-          # package, not a 10.9 .pkg install of ITSELF -- the "Requires Mac OS X 10.9.5 or later"
-          # floor the wrapper hardcoded for every caller was never true for this repo's own release.
+          # Called directly (no wrapper): shipyard DOES publish a floored .pkg of itself --
+          # package-pkg.sh builds it through set_install_floor.sh, whose MIN_OS defaults to (and
+          # self-checks) 10.9.5 -- so the notes must state the floor this repo's own appcast enforces,
+          # same as every other repo.
           sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "v$v" --version "$v" \
-            --product Shipyard --out dist/RELEASE_NOTES.md
+            --product Shipyard --min-os 10.9.5 --out dist/RELEASE_NOTES.md
           [ -s dist/RELEASE_NOTES.md ] || { echo "::error::release notes came back empty"; exit 1; }
 
       - name: Sign + appcast

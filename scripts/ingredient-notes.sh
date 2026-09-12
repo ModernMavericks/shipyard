@@ -35,6 +35,19 @@ pin_name() {
   esac
 }
 
+# components/*/version files (container-tools' REPO=/REF=/DIGEST=/BASE= shape) are ONE OF SEVERAL
+# pin files sharing those same four key names -- unlike versions.sh/pins.env, which are the repo's
+# one and only pin file. A bare "REF" bullet is unambiguous only until a SECOND component moves in
+# the same release, so these are prefixed with the component name ALWAYS, not just when this run
+# happens to be ambiguous (an unprefixed bullet that reads fine today silently becomes misattributed
+# the day that second component moves). Every other pin file needs no prefix at all.
+label_prefix_for() {
+  case "$1" in
+    components/*/version) printf '%s / ' "$(pin_name "$1")" ;;
+    *) printf '' ;;
+  esac
+}
+
 # The Subject: line of a mail-formatted patch, minus any [PATCH n/m] prefix. Empty for a plain diff.
 patch_subject() {
   sed -n 's/^Subject:[[:space:]]*//p' | sed 's/^\[PATCH[^]]*\][[:space:]]*//' | head -1
@@ -82,35 +95,17 @@ assignments() {
 # A pin file gets the per-key rendering when it has at least one shell-style KEY=VALUE (or
 # `export KEY=VALUE`) assignment line -- a CONTENT test, not an extension test. pins.env holds the
 # exact same shape as pins.sh under a different name (and, like pins.sh, may also source another
-# file or run a plain conditional -- assignments() below already ignores any line that is not itself
-# an assignment, so detecting the shape needs only ONE such line, not uniformity across the whole
+# file or run a plain conditional -- assignments() already ignores any line that is not itself an
+# assignment, so detecting the shape needs only ONE such line, not uniformity across the whole
 # file). A genuine blob (a patch, a vendored binary, a single bare version string) has none and falls
 # through to the opaque byte-delta fallback regardless of what it happens to be called.
 #
-# The key class is UPPERCASE ONLY, matching assignments() exactly (see its comment): golang's real
-# vendor/cacert.pem has base64 padding lines ("MrY=", "IhNzbM8m9Yop5w==") that a looser
-# [A-Za-z_][A-Za-z0-9_]* class matches as one-line "assignments", which would report base64
-# fragments as build ingredients on the next CA-bundle refresh -- exactly the false-claim shape
-# this whole fix exists to remove, reintroduced through the sniffer instead of the dispatch.
-#
-# And matching assignments()'s OTHER guard too: an all-caps-and-digit padding line ("MK9=") still
-# matches an uppercase-only key class, with an empty value. Requiring at least one non-"=" character
-# after the "=" is what actually excludes every base64 padding line (padding is only ever "="
-# characters, at the end) instead of merely thinning the false-positive rate.
+# Defined directly in terms of assignments() -- not a second, hand-synced parse of the same
+# question -- so the two can never drift: a file assignments() extracts nothing from can never take
+# the per-key branch (which would render zero bullets and silently say NOTHING about a pin that did
+# change), and a file it extracts something from always does.
 is_kv_pins() {
-  awk '
-    { line = $0
-      sub(/^[[:space:]]*#.*/, "", line)
-      gsub(/^[[:space:]]+/, "", line); gsub(/[[:space:]]+$/, "", line)
-      if (line == "") next
-      if (line ~ /^(export[[:space:]]+)?[A-Z][A-Z0-9_]*=/) {
-        val = line
-        sub(/^(export[[:space:]]+)?[A-Z][A-Z0-9_]*=/, "", val)
-        if (val ~ /[^=]/) found = 1
-      }
-    }
-    END { exit(found ? 0 : 1) }
-  ' "$1"
+  [ -n "$(assignments < "$1")" ]
 }
 
 for arg in "$@"; do
@@ -142,10 +137,7 @@ for arg in "$@"; do
           # Per-key, same as an existing file's added keys below -- a brand-new pins.env must not
           # print $exclkey's (the repo's own upstream) value verbatim just because the whole FILE is
           # new; every OTHER key in it is still a real, reportable ingredient.
-          case "$path" in
-            components/*/version) label_prefix="$(pin_name "$path") / " ;;
-            *) label_prefix="" ;;
-          esac
+          label_prefix="$(label_prefix_for "$path")"
           assignments < "$path" | sort | while IFS= read -r line; do
             key="${line%%	*}"; newv="${line#*	}"
             [ "$key" = "$exclkey" ] && continue
@@ -185,16 +177,7 @@ for arg in "$@"; do
       ;;
     *)
       if is_kv_pins "$path"; then
-        # components/*/version files (container-tools' REPO=/REF=/DIGEST=/BASE= shape) are ONE OF
-        # SEVERAL pin files sharing those same four key names -- unlike versions.sh/pins.env, which
-        # are the repo's one and only pin file. A bare "REF" bullet is unambiguous only until a
-        # SECOND component moves in the same release, so these are prefixed with the component name
-        # ALWAYS, not just when this run happens to be ambiguous (an unprefixed bullet that reads
-        # fine today silently becomes misattributed the day that second component moves).
-        case "$path" in
-          components/*/version) label_prefix="$(pin_name "$path") / " ;;
-          *) label_prefix="" ;;
-        esac
+        label_prefix="$(label_prefix_for "$path")"
         git show "$prev:$path" | assignments | sort > "$tmp/old"
         assignments < "$path" | sort > "$tmp/new"
         while IFS= read -r line; do

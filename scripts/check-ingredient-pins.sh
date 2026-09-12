@@ -23,7 +23,10 @@ fi
 
 status=0
 for p in $pins; do
-  git ls-files --error-unmatch "$p" >/dev/null 2>&1 || {
+  # A "path:KEY" entry (ingredient-pins.sh's own-upstream-paths key form) names a tracked FILE plus a
+  # key excluded from it -- only the path half is a git path, so strip the key before testing it.
+  path="${p%%:*}"
+  git ls-files --error-unmatch "$path" >/dev/null 2>&1 || {
     echo "check-ingredient-pins: pin '$p' is not tracked in git; notes read pin history from git" >&2
     status=1
   }

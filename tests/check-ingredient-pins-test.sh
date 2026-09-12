@@ -65,4 +65,19 @@ YML
 printf 'x\n' > untracked.txt
 sh "$S" >/dev/null || { echo "FAIL untracked-but-unmatched should still pass"; exit 1; }
 
+# the swift-repo own-upstream form ("path:KEY") must not be tested as a git path with the key still
+# attached -- pins.env:SWIFT_VERSION is never a tracked file, only pins.env is.
+printf 'SWIFT_VERSION=6.3.3\nOTHER_PIN=x\n' > pins.env
+git add pins.env; git commit -qm "add pins.env"
+cat > .github/workflows/repackage-on-ingredient-bump.yml <<'YML'
+on:
+  push:
+    paths: ['pins.env']
+jobs:
+  repackage:
+    with:
+      own-upstream-paths: pins.env:SWIFT_VERSION
+YML
+sh "$S" >/dev/null || { echo "FAIL path:KEY own-upstream form should pass (pins.env is tracked)"; exit 1; }
+
 echo "PASS: check-ingredient-pins"
