@@ -8,6 +8,7 @@
 # Runs at PACKAGE TIME, on macOS, where pkgutil exists and the artifacts do -- not in the conventions
 # gate, which reads a repo in seconds and gates every PR.
 set -eu
+SELF="$(cd "$(dirname "$0")" && pwd)"   # siblings live here (deviations.sh)
 dist="${1:?artifact-facts: dist directory required}"
 version="${2:?artifact-facts: version required}"
 root="${3:-$(pwd)}"
@@ -31,12 +32,19 @@ if [ -d "$root/lines" ]; then
 fi
 
 # Declared deviations live in INGREDIENTS.md, under "## Conformance deviations", as
-#   - <check>: <reason>
+#   - <check>[:<glob>]: <reason>
 # A deviation IS a product fact, which is why it belongs with the other product facts rather than in a
-# file of its own that could disagree with them.
+# file of its own that could disagree with them. ONE parser reads them -- deviations.sh -- because the
+# conventions gate honours the same declarations, and two regexes for one grammar drift apart silently.
+# It prints "<check> <glob-or-*> <reason>"; the fact stream spells an unscoped one as the bare check.
 if [ -f "$root/INGREDIENTS.md" ]; then
-  sed -n '/^## Conformance deviations/,/^## /p' "$root/INGREDIENTS.md" \
-    | sed -n 's/^- *\([a-z][a-z0-9_-]*\)\(:[^ :]*\)\{0,1\} *: *\(..*\)$/deviation \1\2 \3/p'
+  # Not a pipeline: deviations.sh exits 1 on an entry with no reason, and a pipeline would report the
+  # `while`'s status instead -- turning "this declaration is malformed" into "there are no deviations".
+  _devs="$(sh "$SELF/deviations.sh" "$root")" || exit 1
+  [ -z "$_devs" ] || printf '%s\n' "$_devs" | while read -r _check _glob _reason; do
+    if [ "$_glob" = '*' ]; then printf 'deviation %s %s\n' "$_check" "$_reason"
+    else printf 'deviation %s:%s %s\n' "$_check" "$_glob" "$_reason"; fi
+  done
 fi
 
 for f in "$dist"/*; do
