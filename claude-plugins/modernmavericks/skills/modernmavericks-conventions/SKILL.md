@@ -653,8 +653,7 @@ its `main` — in the left column, that push is a release.
   forwarded to `--line`) specifically so the repos still on the old signature would get the standard
   body before each migrated. The per-repo migration (2026-09-12) converted every remaining caller to
   the direct form above; a repo-wide grep across all 13 product repos finds zero callers of
-  `release-notes-file.sh` left (shipyard itself still references it — the script, its test, and this
-  doc — since it is not deleted; that is a separate decision). But a new or copied workflow that
+  `release-notes-file.sh` left (shipyard itself still references it — in the wrapper, its test, a historical comment in `check-shell-portability.sh`, and this doc — since it is not deleted; that is a separate decision). But a new or copied workflow that
   calls it is drift, not precedent: write the direct call instead.
 - **macho-tools is deliberately out of scope for this migration.** It has no release infrastructure at
   all (no `release.yml`, no `.pkg`, no updater) to point at the generator; its own plan needs
@@ -1251,7 +1250,8 @@ it here.** A silently dropped increment is how the family drifted in the first p
       than silent — done 2026-09-11
 - [x] Per-repo migration onto the generator (13 product repos plus shipyard itself, swift-runtime
       first) — done 2026-09-12. Every `release.yml` in the family now calls `release-notes.sh`
-      directly; `release-notes-file.sh` is legacy, with zero remaining callers. See Release notes,
+      directly; `release-notes-file.sh` is legacy, with zero product-repo callers (shipyard retains the
+      wrapper and its test until the wrapper is retired). See Release notes,
       above, for the per-repo `--product`/`--line`/`--min-os` decisions this migration recorded, the
       three generator defects it found and fixed, and what it deliberately left deferred
 - [ ] **The three enforcement layers** (a conventions-gate check that a repo actually calls the

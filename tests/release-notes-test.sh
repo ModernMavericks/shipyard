@@ -423,8 +423,8 @@ if ( cd "$r" && MAVERICKS_ROOT="$r" sh "$S" --tag 9.9p2-mavericks.1 --version 9.
        --out "$r/OUT.md" ) >/dev/null 2>&1; then echo "FAIL args: --product must be required"; exit 1; fi
 
 # --- G3: the footer '---' must not be emitted with nothing after it --------------------------------
-# shipyard's own release shape: no --min-os floor and (a fixture with no remote) no compare link. The
-# old code printed the rule unconditionally and then conditionally appended the floor/link, so a body
+# A release with no --min-os floor and no compare link (e.g., swift-toolchain in a fixture with no remote).
+# The old code printed the rule unconditionally and then conditionally appended the floor/link, so a body
 # with neither ended in a dangling <hr> and nothing after it.
 r="$work/nofooter"; mkdir -p "$r/release-notes"
 ( cd "$r" && git init -q -b main . && git config user.email t@example.com && git config user.name tester )
