@@ -34,7 +34,9 @@ YML
 
 gen() {  # $1 = repo, $2 = tag/version, rest = extra args
   r="$1"; v="$2"; shift 2
-  ( cd "$r" && MAVERICKS_ROOT="$r" sh "$S" --tag "$v" --version "$v" \
+  ( cd "$r" && MAVERICKS_ROOT="$r" \
+      GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=ModernMavericks/mavericks-openssh \
+      sh "$S" --tag "$v" --version "$v" \
       --product OpenSSH --min-os 10.9.5 --out "$r/OUT.md" "$@" )
 }
 
@@ -107,6 +109,9 @@ printf 'No upstream release notes: upstream publishes none.\n' > "$r/INGREDIENTS
 gen "$r" 9.9p2-mavericks.1 >/dev/null || { echo "FAIL nohook+declared: should pass"; exit 1; }
 
 # --- FATAL: a shallow clone hides the tags, so the kind cannot be decided --------------------------
+# The assertion checks the MESSAGE, not just a nonzero exit: with the shallow guard removed, this
+# fixture still exits 1 (via upstream-notes.sh's own shallow-clone bail, mapped to the catch-all die),
+# so "some die fired" is not enough to prove the shallow guard itself is doing anything.
 r="$work/shallow"; mkrepo "$r"
 ( cd "$r" && git tag 9.9p2-mavericks.1 )
 sr="$work/shallow-clone"
@@ -114,6 +119,76 @@ git clone -q --depth 1 "file://$r" "$sr" 2>/dev/null || git clone -q --depth 1 "
 if ( cd "$sr" && MAVERICKS_ROOT="$sr" sh "$S" --tag 9.9p2-mavericks.2 --version 9.9p2-mavericks.2 \
        --product OpenSSH --out "$sr/OUT.md" ) >/dev/null 2>&1; then
   echo "FAIL shallow: should be fatal (this is signal-desktop's silent-drop shape)"; exit 1
+fi
+shallow_out="$(cd "$sr" && MAVERICKS_ROOT="$sr" sh "$S" --tag 9.9p2-mavericks.2 --version 9.9p2-mavericks.2 \
+       --product OpenSSH --out "$sr/OUT.md" 2>&1 || true)"
+printf '%s\n' "$shallow_out" | grep -qi shallow \
+  || { echo "FAIL shallow: cause not named as shallow: $shallow_out"; exit 1; }
+
+# --- FATAL: tags exist upstream but this checkout was not given them (git clone --no-tags) ----------
+# A non-shallow checkout can still hide tags -- the shallow guard above does not fire here at all --
+# so a repackage (-mavericks.2) must not be silently read as a first release with no baseline.
+r="$work/notags"; mkrepo "$r"
+( cd "$r" && git tag 9.9p2-mavericks.1 )
+nr="$work/notags-clone"
+git clone -q --no-tags "$r" "$nr" 2>/dev/null
+if ( cd "$nr" && MAVERICKS_ROOT="$nr" sh "$S" --tag 9.9p2-mavericks.2 --version 9.9p2-mavericks.2 \
+       --product OpenSSH --out "$nr/OUT.md" ) >/dev/null 2>&1; then
+  echo "FAIL notags: -mavericks.2 with no visible upstream tags should be fatal"; exit 1
+fi
+# ...but -mavericks.1 with no visible tags stays a legitimate first release (or a not-yet-tagged
+# dispatch-cut build): the plan accepts that false negative rather than block every real first release.
+if ! ( cd "$nr" && MAVERICKS_ROOT="$nr" GITHUB_SERVER_URL=https://github.com \
+       GITHUB_REPOSITORY=ModernMavericks/mavericks-openssh sh "$S" \
+       --tag 9.9p2-mavericks.1 --version 9.9p2-mavericks.1 \
+       --product OpenSSH --out "$nr/OUT.md" ) >/dev/null 2>&1; then
+  echo "FAIL notags: -mavericks.1 with no visible upstream tags should still succeed"; exit 1
+fi
+
+# --- parallel lines: --line scopes the baseline to its own line, not the numerically-highest tag ----
+# golang ships parallel lines; 1.26.7's baseline must be 1.26.5 (same line), not 1.27.0 (a newer line
+# that shipped in between). Both spellings of --line must work: the human-friendly "1.26" (the
+# original bug: previous-release-tag.sh takes a GLOB, so the bare prefix matched nothing) and the
+# already-a-glob "1.26.*".
+r="$work/golang"; mkrepo "$r"
+( cd "$r" && git tag 1.26.5-mavericks.1 && git tag 1.27.0-mavericks.1 )
+for line in "1.26" "1.26.*"; do
+  ( cd "$r" && GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=ModernMavericks/mavericks-golang \
+      MAVERICKS_ROOT="$r" sh "$S" --tag 1.26.7-mavericks.1 --version 1.26.7-mavericks.1 \
+      --product Go --line "$line" --out "$r/OUT.md" ) >/dev/null \
+    || { echo "FAIL golang ($line): should succeed"; exit 1; }
+  grep -q 'was 1.26.5' "$r/OUT.md" \
+    || { echo "FAIL golang ($line): baseline should be 1.26.5"; cat "$r/OUT.md"; exit 1; }
+  grep -q '1.27.0' "$r/OUT.md" \
+    && { echo "FAIL golang ($line): must not pick the newer 1.27.0 line as baseline"; cat "$r/OUT.md"; exit 1; }
+done
+
+# --- FATAL: an ingredient repackage caller whose pins cannot be derived must not ship as packaging-only
+# The original openssh bug: a real ingredient bump (components/libressl/version) reported as
+# "packaging changes only" because the caller was under a name ingredient-pins.sh did not look for, or
+# its own crash was swallowed. Reproduce both against this script directly, not just ingredient-pins.sh.
+r="$work/badcaller"; mkrepo "$r"
+mv "$r/.github/workflows/repackage-on-ingredient-bump.yml" "$r/.github/workflows/renovate-repackage.yml"
+( cd "$r" && git add -A && git commit -qm "rename caller" && git tag 9.9p2-mavericks.1 )
+printf '3.9.2\n' > "$r/components/libressl/version"
+( cd "$r" && git commit -qam "bump libressl" && git tag 9.9p2-mavericks.2 )
+gen "$r" 9.9p2-mavericks.2 >/dev/null \
+  || { echo "FAIL badcaller: should succeed once the caller is discovered by content, not by name"; exit 1; }
+grep -q 'rebuilt because build ingredients moved' "$r/OUT.md" \
+  || { echo "FAIL badcaller: a moved pin under a differently-named caller must not read as packaging-only"; cat "$r/OUT.md"; exit 1; }
+
+r="$work/nopins"; mkrepo "$r"
+cat > "$r/.github/workflows/repackage-on-ingredient-bump.yml" <<'YML'
+on:
+  push:
+    branches: [main]
+jobs:
+  repackage:
+    uses: ModernMavericks/shipyard/.github/workflows/repackage-on-ingredient-bump.yml@v1
+YML
+( cd "$r" && git add -A && git commit -qm "caller with no paths" && git tag 9.9p2-mavericks.1 )
+if gen "$r" 9.9p2-mavericks.1 >/dev/null 2>&1; then
+  echo "FAIL nopins: a wired-up caller deriving zero pins should be fatal"; exit 1
 fi
 
 # --- FATAL: missing required arguments -------------------------------------------------------------

@@ -6,7 +6,8 @@
 #     --tag/--version   the release tag and full version (equal for most repos; golang's differ)
 #     --product         the BARE product noun ("OpenSSH", "Go", "Signal Desktop"). This composes the
 #                       family's prose register: "OpenSSH 9.9p2 for Mavericks (9.9p2-mavericks.6)".
-#     --line            upstream-line prefix for a repo shipping parallel lines (golang: "1.26")
+#     --line            upstream-line prefix for a repo shipping parallel lines (golang: "1.26";
+#                       "1.26.*" also accepted -- both are normalized to a glob before use)
 #     --min-os          emits the install floor line; omit for a product that is not a 10.9 .pkg
 #
 # Sections, in order: title, committed prose (verbatim, never rewritten), What changed, Build
@@ -39,6 +40,17 @@ die() { echo "release-notes: $1" >&2; exit 1; }
 [ -n "$PRODUCT" ] || die "--product is required (the bare product noun, e.g. OpenSSH)"
 [ -n "$OUT" ] || die "--out is required"
 
+# --line is documented human-friendly ("1.26"), but previous-release-tag.sh takes a GLOB it appends
+# "-mavericks.*" to; passing the bare prefix silently matches nothing (1.26 vs the real tag
+# 1.26.7-mavericks.N), which is how a real golang repackage was reported as "First release" with no
+# compare link. Normalize here so both "1.26" and "1.26.*" work; leave empty (no --line) alone.
+if [ -n "$LINE" ]; then
+  case "$LINE" in
+    *'*') ;;                      # already a glob
+    *) LINE="$LINE.*" ;;
+  esac
+fi
+
 cd "$MAVERICKS_ROOT"
 
 # Tags decide the release kind, so a checkout that cannot show them cannot generate notes. This is the
@@ -51,6 +63,24 @@ git tag --list >/dev/null 2>&1 || die "cannot list release tags in $MAVERICKS_RO
 UP="${VER%%-mavericks.*}"
 SELF_UPSTREAM=no
 if [ "$UP" = "$VER" ]; then SELF_UPSTREAM=yes; fi
+
+# A non-shallow checkout can still hide tags (git clone --no-tags, actions/checkout fetch-tags:
+# false): git tag --list succeeds and is simply empty, so the shallow guard above never fires. Without
+# this check that reads as "no earlier release of $UP", and a repackage (-mavericks.N, N>1) is
+# announced as a brand-new upstream with a spurious link and no ingredient section -- the same
+# silent-drop shape the shallow guard exists to stop, through a different door. N=1 with no visible
+# tags is left alone: that IS what a genuine first release, or a dispatch-cut build whose own tag does
+# not exist yet, looks like.
+if [ "$SELF_UPSTREAM" = no ]; then
+  UPTAGS="$(git tag --list "$UP-mavericks.*" 2>/dev/null || true)"
+  if [ -z "$UPTAGS" ]; then
+    N="${VER##*-mavericks.}"
+    case "$N" in
+      1) ;;
+      *) die "$VER is -mavericks.$N but no $UP-mavericks.* tags are visible in $MAVERICKS_ROOT, so it is unknown whether this is a first release or a repackage (tags may not be fetched -- use fetch-tags: true or fetch-depth: 0)" ;;
+    esac
+  fi
+fi
 
 PREV="$(sh "$SELF/previous-release-tag.sh" "$TAG" ${LINE:+"$LINE"} || true)"
 
@@ -76,7 +106,25 @@ printf '\n### What changed\n' >> "$tmp"
 # An ingredient section is what distinguishes an ingredient repackage from a packaging-only one, so
 # compute it first. ingredient-pins.sh derives the pins from the repo's own repackage caller, which is
 # what keeps the release trigger and the notes from drifting apart.
-PINS="$(sh "$SELF/ingredient-pins.sh" || true)"
+#
+# The caller is discovered by what it CALLS, not by its own filename: ingredient-pins.sh's default
+# path is only a convention, and a caller under any other name silently read as "no ingredients" --
+# which is the exact original openssh bug (a real libressl bump reported as "packaging changes only")
+# reproduced through this script. And `|| true` on a crash in ingredient-pins.sh reads the same way:
+# "this repo has no ingredients" instead of "the pins could not be read". Neither is a repackage that
+# is allowed to ship: a repo wired to repackage on ingredient bumps whose notes cannot say which
+# ingredient moved is precisely the gap this plan closes.
+CALLER=""
+for f in "$MAVERICKS_ROOT"/.github/workflows/*.yml "$MAVERICKS_ROOT"/.github/workflows/*.yaml; do
+  [ -f "$f" ] || continue
+  grep -q 'repackage-on-ingredient-bump\.yml' "$f" 2>/dev/null && { CALLER="$f"; break; }
+done
+PINS=""
+if [ -n "$CALLER" ]; then
+  PINS="$(sh "$SELF/ingredient-pins.sh" "$CALLER")" \
+    || die "ingredient-pins.sh failed reading the pins $CALLER watches; a repackage caller whose pins cannot be read must not ship notes that call it packaging-only"
+  [ -n "$PINS" ] || die "$CALLER calls repackage-on-ingredient-bump.yml but ingredient-pins.sh found no pins in it (check its 'paths:' list and own-upstream-paths)"
+fi
 INGREDIENTS=""
 if [ -n "$PREV" ] && [ -n "$PINS" ]; then
   # shellcheck disable=SC2086  # PINS is a deliberate list of paths
@@ -126,8 +174,10 @@ printf '\n---\n' >> "$tmp"
 [ -z "$MINOS" ] || printf 'Requires Mac OS X %s or later.\n' "$MINOS" >> "$tmp"
 
 # The compare link is objective "everything else that changed". Its absence is not an error: a first
-# release has no baseline, and a checkout with no remote (a test fixture) has no URL to build -- but
-# the baseline is still worth naming even without a link, so callers can find it by hand.
+# release has no baseline, and a checkout with no remote (a test fixture) has no URL to build. This is
+# the Sparkle <description> a 10.9 user reads in the update dialog -- a bare "since X...Y" with no
+# link is not a sentence and gives them nothing to act on, so when no repository URL can be derived
+# the line is omitted entirely rather than shown as unusable text.
 if [ -n "$PREV" ]; then
   if [ -n "${GITHUB_SERVER_URL:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
     REPO_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
@@ -139,16 +189,17 @@ if [ -n "$PREV" ]; then
       *) REPO_URL="" ;;
     esac
   fi
-  if [ -n "$REPO_URL" ]; then
-    printf '[All changes since %s](%s/compare/%s...%s)\n' "$PREV" "$REPO_URL" "$PREV" "$TAG" >> "$tmp"
-  else
-    printf 'All changes since %s...%s\n' "$PREV" "$TAG" >> "$tmp"
-  fi
+  [ -z "$REPO_URL" ] || printf '[All changes since %s](%s/compare/%s...%s)\n' "$PREV" "$REPO_URL" "$PREV" "$TAG" >> "$tmp"
 fi
 
 # --- self-check: never hand back something the publisher would refuse -----------------------------
-sh "$SELF/check-release-notes.sh" "$tmp" "$VER" >/dev/null \
-  || die "the generated notes are not the family shape (see the complaint above); this is a bug in release-notes.sh"
+if ! sh "$SELF/check-release-notes.sh" "$tmp" "$VER" >/dev/null; then
+  if [ -f "$notes" ] && [ -s "$notes" ]; then
+    die "the generated body failed the family shape check (see the complaint above); likely cause: the committed prose at $notes"
+  else
+    die "the generated body failed the family shape check (see the complaint above); this is a bug in release-notes.sh"
+  fi
+fi
 
 mkdir -p "$(dirname "$OUT")"
 cat "$tmp" > "$OUT"
