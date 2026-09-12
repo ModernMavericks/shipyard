@@ -1,6 +1,26 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "This repo has no product build to gate on, so it keeps blind automerge for its trivial action/dep bumps even though the shared preset now defaults ignoreTests:false.",
   "extends": ["github>ModernMavericks/shipyard"],
-  "ignoreTests": true
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "shipyard-cmake's CMake (cmake.pin). No hash to move: build-cmake.sh verifies the tarball against Kitware's own published SHA-256 file, and CI builds it, so a bump is gated on green like any other.",
+      "managerFilePatterns": ["/^cmake\\.pin$/"],
+      "matchStrings": ["CMAKE_VERSION=(?<currentValue>\\S+)"],
+      "depNameTemplate": "cmake",
+      "packageNameTemplate": "Kitware/CMake",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "The family toolchain that compiles shipyard-cmake's x86_64/10.9 half (mavericks-clang.pin). CI verifies the pkg against the release's SHA256SUMS; a bump rebuilds shipyard-cmake on green.",
+      "managerFilePatterns": ["/^mavericks-clang\\.pin$/"],
+      "matchStrings": ["MAVERICKS_CLANG_VERSION=(?<currentValue>\\S+)"],
+      "depNameTemplate": "mavericks-clang",
+      "packageNameTemplate": "ModernMavericks/clang",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
+    }
+  ]
 }

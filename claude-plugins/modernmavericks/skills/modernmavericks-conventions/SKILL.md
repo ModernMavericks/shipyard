@@ -27,33 +27,38 @@ The family has an older/simpler variant and a current/mature variant. **Start fr
 
 ## shipyard: consume its facilities, never hand-roll them
 
-- Install via its **action**: `uses: ModernMavericks/shipyard/.github/actions/install@v1`. It
-  self-registers in the CMake user package registry; consume it downstream with `find_package` — **no
-  `CMAKE_PREFIX_PATH`, no vendored copy, no hand-run `cmake --install`.**
+- Install via its **action**: `uses: ModernMavericks/shipyard/.github/actions/install@v1`. It installs
+  the released `.pkg` and exports `SHIPYARD_SCRIPTS`; consume the CMake side with `find_package` —
+  **no `CMAKE_PREFIX_PATH`, no vendored copy, no hand-run `--install`.**
 
-  **Installing shipyard: the pkg, not `cmake --install`.** Download the `.pkg` from the latest release
-  (`gh release download -R ModernMavericks/shipyard --pattern '*.pkg'`) and install it. It puts the
-  payload in `/usr/local/mavericks-shipyard`, registers that location with whatever cmake is on your
-  `PATH`, and installs a Sparkle updater that keeps it current — so an install can never quietly become
-  a month old, which is exactly what happened before this existed.
+  **Installing shipyard: the pkg.** Download it from the latest release
+  (`gh release download -R ModernMavericks/shipyard --pattern '*.pkg'`) and install it. It puts one
+  whole prefix at `/usr/local/mavericks-shipyard` — CMake, the shipyard modules and the scripts — puts
+  `shipyard-cmake`, `shipyard-ctest` and `shipyard-cpack` in `/usr/local/bin`, and installs a Sparkle
+  updater that keeps it current, so an install can never quietly become a month old.
 
-  `cmake --install` is now for **developing shipyard itself**, not for consuming it. CI is unaffected:
-  `install@v1` still builds from source and stamps the version it installs.
+  **Configure, test and package with `shipyard-cmake` / `shipyard-ctest` / `shipyard-cpack`** — in
+  workflows and in `build/*.sh` alike. `MavericksShipyardConfig.cmake` **refuses any other cmake**,
+  by name, at configure time; the conventions gate finds the call in a PR instead. shipyard is found
+  in shipyard-cmake's own prefix, so there is nothing to register and no order of installation to get
+  right.
 
-  If you install shipyard on a box with no cmake, the shell scripts still work and the CMake side is
-  skipped with a message. Install a cmake — any cmake — then run
-  `sh /usr/local/mavericks-shipyard/scripts/register-with-cmake.sh /usr/local/mavericks-shipyard`, or
-  just wait for the next Sparkle update, which runs the same step.
+  `--install` is for **developing shipyard itself**. Install into a prefix of your own and override
+  one configure with `CMAKE_PREFIX_PATH=<that prefix> shipyard-cmake …`; it is searched first, so the
+  override is explicit and gone when you stop asking.
 - `@v1` is the **moving major tag**; Renovate's native github-actions manager tracks it — **no custom
   manager, no SHA pin, no marker comment** for it. It moves **automatically**: shipyard's `release.yml`
   runs on every push to `main`, derives the version from the committed line in `UPSTREAM_VERSION` plus
   the commit count (`scripts/shipyard-version.sh`), publishes a GitHub Release for the immutable
   `vX.Y.Z`, and fast-forwards `@v1` to that commit. So a shipyard change reaches consumers by **pushing
   `main`** — never move `@v1` by hand, and there's no separate "publish" step to run.
-- **After `install@v1`, use `$SHIPYARD_SCRIPTS`** — the action exports the installed scripts dir. Do NOT
-  re-derive it with `SH="$(cat "$HOME/.cmake/packages/MavericksShipyard/"* | head -1)/scripts"`;
-  that incantation appeared 11 times across the family before it was exported once. (It remains valid
-  — it is what the action itself reads — so adopting `$SHIPYARD_SCRIPTS` is per-repo, never a flag day.)
+- **After `install@v1`, use `$SHIPYARD_SCRIPTS`** — the action exports the installed scripts dir.
+  **Everywhere else, source `msc.sh`**: copy `$SHIPYARD_SCRIPTS/templates/msc.sh` to your repo's
+  `build/msc.sh` and `. build/msc.sh`. It honours `SHIPYARD_SCRIPTS` when CI has set it, and otherwise
+  asks `shipyard-cmake` where `find_package(MavericksShipyard)` lands — so a `CMAKE_PREFIX_PATH` dev
+  override moves the scripts together with the modules. The gate requires your copy to match the
+  template **byte for byte**: eleven hand-kept copies had already drifted into three variants. Change
+  it in shipyard, not in your repo.
 - Reuse a sibling checkout of shipyard locally; don't duplicate its logic.
 
 **Pinning shipyard: `@v1` normally, `@vX.Y.Z` when you need to stand still.** `@v1` is a *moving*
@@ -910,6 +915,12 @@ Scoping is the point: swift-toolchain republishing swift.org's `.pkg` must not l
 build-support tarball it *does* build to drift. An unscoped deviation quietly covers artifacts nobody
 meant to excuse.
 
+**The same block, and the same parser (`deviations.sh`), covers three of the family-conventions checks**
+— name the check and scope it to the file: `registry-read:<path>`, `msc-template:<path>`,
+`shipyard-cmake-only:<path>`. One grammar, read identically by the artifact checker and the gate, so a
+declared exception cannot mean two things. An entry with no reason **fails**, in both: an exception
+without one is indistinguishable from drift.
+
 ## A "transitional" decision without an exit task is a permanent one
 
 When a review accepts something as transitional — "for now", "until X is
@@ -969,6 +980,9 @@ none of which anything detected. A convention that is not checked is a conventio
 | A workflow that runs `sign_and_appcast.sh` has some workflow calling `scan-for-key.yml` | A signing run's logs are public and GitHub masks only the literal secret; `publish-release.yml` refuses a signed release with no scan record, and this catches the missing job on a PR instead |
 | If `lines/` exists, every `lines/<id>/UPSTREAM_VERSION` has its OWN **capped** Renovate manager | An uncapped line walks onto the next major it was never built for; an unmanaged line goes stale silently; one manager spanning lines cannot cap each |
 | A Renovate manager whose captured pin ends in `-mavericks.N` has a `regex:` versioning that captures N | Default versioning coerces `-mavericks.N` away, so every repackage compares equal and the pin never moves — silently, with the dep listed as tracked. swift-runtime missed three swift-toolchain releases this way |
+| Nothing tracked reads the CMake **user package registry** (`~/.cmake/packages`) | shipyard now lives in `shipyard-cmake`'s own prefix and nothing writes that registry any more, so a script reading it reads a file that is no longer there — and reads it *silently*, resolving to an empty path rather than failing |
+| A repo's `build/msc.sh` (or `./msc.sh`) equals `$SHIPYARD_SCRIPTS/templates/msc.sh` **byte for byte** | It is the one piece each product carries in order to find shipyard. Eleven hand-kept copies had drifted into three variants, so "the incantation" meant three different things depending on which repo you opened |
+| No plain `cmake` / `ctest` / `cpack` at command position — in workflow `run:` bodies or in committed `*.sh` outside `tests/` | `MavericksShipyardConfig.cmake` refuses any other cmake at configure time; this finds the call in the PR instead of in the release. Comment lines and prose (`echo "… (cmake --build <dir>)"`) are not calls, and `tests/` is excluded because fixtures quote the command on purpose |
 
 Wire it with the reusable workflow — three lines, and it never changes when a check is added:
 
@@ -1051,6 +1065,10 @@ in the same commit.
    `plugin.json` deliberately has no `version`, so every push to shipyard's `main` is an update —
    with one pinned, contributors got an update only when someone remembered to bump it (three bumps
    against ten-plus skill edits left installs 200 lines behind).
+10. Copy `$SHIPYARD_SCRIPTS/templates/msc.sh` to `build/msc.sh` and commit it — the gate checks it
+   **verbatim**, so never edit your copy; fix the template in shipyard instead.
+11. Use `shipyard-cmake` / `shipyard-ctest` / `shipyard-cpack` everywhere — workflows and `build/*.sh`.
+   No plain `cmake`, and nothing that reads `~/.cmake/packages`; both are gate failures.
 
 ## Consolidation backlog
 

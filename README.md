@@ -13,30 +13,49 @@ gh release download -R ModernMavericks/shipyard --pattern '*.pkg'
 sudo installer -pkg mavericks-shipyard-*.pkg -target /
 ```
 
-It lands in `/usr/local/mavericks-shipyard` and registers with whatever cmake is on your `PATH`. It
-also keeps itself current: its updater checks daily and installs each new release. The same pkg works
-on Intel, on Apple Silicon and on 10.9.
+Everything lands in `/usr/local/mavericks-shipyard` — one prefix holding CMake, the shipyard modules
+and the shell scripts — and three commands appear on your `PATH`:
 
-With no cmake, the shell scripts still work and the CMake side is skipped with a message. To finish,
-install any cmake, then run
-`sh /usr/local/mavericks-shipyard/scripts/register-with-cmake.sh /usr/local/mavericks-shipyard`, or
-wait for the next update, which runs the same step.
+```
+/usr/local/bin/shipyard-cmake
+/usr/local/bin/shipyard-ctest
+/usr/local/bin/shipyard-cpack
+```
+
+**Configure your projects with `shipyard-cmake`.** It is a real CMake (4.4.3) that finds shipyard in
+its own prefix, so there is nothing to register and no search path to set. Any *other* cmake is
+refused at configure time, by name — `MavericksShipyardConfig.cmake` says so rather than half-working.
+There is no longer a "install shipyard first and cmake afterwards" order to get right: the pkg brings
+its own.
+
+The pkg also keeps itself current: its updater checks daily and installs each new release. The same
+pkg works on Intel, on Apple Silicon and on 10.9.
+
+GUI tools that want a CMake executable (CLion, VS Code's CMake Tools, Xcode wrappers) should be
+pointed at `/usr/local/bin/shipyard-cmake`. The shared presets live at
+`/usr/local/mavericks-shipyard/share/cmake/MavericksShipyard/mavericks-presets.json`.
+
+If you have a machine that ran an older shipyard, `rm -rf ~/.cmake/packages/MavericksShipyard` once.
+Nothing reads it any more.
 
 ### Developing shipyard itself
 
-`cmake --install` is for working on shipyard, not for consuming it. Install into a prefix whose `bin/`
-is **not** on your `PATH`:
+`--install` is for working on shipyard, not for consuming it. Build and install into a prefix of your
+own:
 
 ```sh
-cmake -S . -B build
-cmake --install build --prefix "$HOME/.local/opt/shipyard-dev"
+shipyard-cmake -S . -B build
+shipyard-cmake --install build --prefix "$HOME/.local/opt/shipyard-dev"
 ```
 
-That points your registry entry at the dev copy. Why not `~/.local` or the default `/usr/local`?
-`find_package` searches prefixes derived from `PATH` before it reads the user package registry. A copy
-under such a prefix (`~/.local` when `~/.local/bin` is on `PATH`, or `/usr/local`) would therefore go
-on shadowing the pkg, even after the registry points back at it. The pkg points the registry back at
-itself every time it installs or updates, so a dev copy stays in effect only until the next update.
+Then point a consumer at the dev copy for one configure, without disturbing the installed pkg:
+
+```sh
+CMAKE_PREFIX_PATH="$HOME/.local/opt/shipyard-dev" shipyard-cmake -S . -B build
+```
+
+`CMAKE_PREFIX_PATH` is searched before shipyard-cmake's own prefix, so the override is explicit, scoped
+to the command that asks for it, and gone the moment you stop asking.
 
 ## Use
 
@@ -57,7 +76,7 @@ In your `CMakePresets.json`:
 ```json
 {
   "version": 6,
-  "include": ["/usr/local/mavericks-shipyard/mavericks-presets.json"],
+  "include": ["/usr/local/mavericks-shipyard/share/cmake/MavericksShipyard/mavericks-presets.json"],
   "configurePresets": [
     { "name": "native", "inherits": "mavericks-native" },
     { "name": "cross",  "inherits": "mavericks-cross"  }
@@ -71,12 +90,17 @@ In your `.github/workflows/*.yml` (if applicable):
 - uses: ModernMavericks/shipyard/.github/actions/install@v1
 ```
 
-Then build:
+Then build, and test:
 
 ```sh
-cmake --preset native    # on Mavericks
-cmake --preset cross     # on Tahoe
+shipyard-cmake --preset native    # on Mavericks
+shipyard-cmake --preset cross     # on Tahoe
+shipyard-ctest --preset native
+shipyard-cpack --preset native    # where the product packages with CPack
 ```
+
+Plain `cmake` is refused: `find_package(MavericksShipyard)` fails with a message naming
+`shipyard-cmake`, rather than configuring against a CMake that cannot target 10.9.
 
 ## Sparkle
 

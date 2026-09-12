@@ -1,8 +1,10 @@
 # Build ingredients
 
-Everything baked into what shipyard ships, and how a change to it reaches a release. shipyard compiles
-nothing: it ships CMake modules, shell scripts, and the Sparkle updater template every product renders.
-Its "build inputs" are therefore the things those scripts fetch on a consumer's behalf.
+Everything baked into what shipyard ships, and how a change to it reaches a release. shipyard **does**
+compile: it builds CMake itself — shipped as `shipyard-cmake`, `shipyard-ctest` and `shipyard-cpack` —
+and the Sparkle updater app, alongside the CMake modules and shell scripts it has always shipped. So
+its build inputs are now both the things it compiles WITH and the things its scripts fetch on a
+consumer's behalf.
 
 This repo is consumed through a **moving** tag. Fifteen repos pin `@v1`, so anything merged here reaches
 all of them within minutes — which is why the version is derived from the commit count (see
@@ -14,7 +16,8 @@ all of them within minutes — which is why the version is derived from the comm
 | MacOSX10.9 SDK | `scripts/fetch_sdk.sh` (`MAVERICKS_SDK_URL` + `MAVERICKS_SDK_SHA256`, phracker/MacOSX-SDKs 11.3) | ❌ **untrackable**: pinned by SHA-256 against a frozen third-party release. There is no newer 10.9 SDK to move to; the pin exists to prove the bytes, not to track a stream. | n/a — a change here would mean a different SDK, which is a deliberate port decision |
 | GitHub Actions (`actions/checkout@v7`, `actions/download-artifact@v8`, `actions/setup-python@v7`, `actions/upload-artifact@v7`, `softprops/action-gh-release@v3`) | `.github/workflows/*.yml` | ✅ native `github-actions` manager | automerges on green (`ship-if-green`), and the merge itself cuts the next shipyard version |
 | `bats` (shell test driver) | installed by `.github/actions/install` from the platform package manager | ✅ tracked by the package manager, not pinned here | a new bats reaches CI on its next run; the suites are version-agnostic |
-| cmake (any, ≥ 3.16) | not pinned — whatever is on `PATH` | ✅ tracked by whatever installed it, not by us | nothing: shipyard deliberately has no opinion about which cmake you use. `find_package` discovery goes through the CMake user package registry, so it does not depend on that cmake's `CMAKE_SYSTEM_PREFIX_PATH`. Install shipyard's pkg before cmake and the scripts half still works; run `register-with-cmake.sh` afterwards to finish |
+| CMake 4.4.3 (shipped as shipyard-cmake) | `cmake.pin` (version only) | ✅ Renovate customManager (github-releases Kitware/CMake) | `build-cmake.sh` verifies Kitware's published SHA-256; CI rebuilds the universal tree on a cache miss; the next push releases it |
+| mavericks-clang 22.1.1-mavericks.1 (compiles shipyard-cmake's x86_64/10.9 half) | `mavericks-clang.pin` | ✅ Renovate customManager (github-releases ModernMavericks/clang, `-mavericks.N` compared) | CI installs the pinned cross pkg (SHA256SUMS-verified); a bump rebuilds shipyard-cmake on green |
 | shipyard's own version | `UPSTREAM_VERSION` (the **line**) + `git rev-list --count` | n/a — first-party | every push to `main` cuts `<line>.<count>`; `@v1` moves to it |
 
 No upstream release notes: shipyard is its own upstream -- it ports nothing, so there are no

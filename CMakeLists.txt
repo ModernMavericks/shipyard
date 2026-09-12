@@ -95,7 +95,8 @@ write_basic_package_version_file(
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/MavericksShipyardConfigVersion.cmake"
   DESTINATION "${_dest}")
 
-# Self-tests for the shared shell helpers. `cmake -S . -B build && ctest --test-dir build`.
+# Self-tests for the shared shell helpers.
+# `shipyard-cmake -S . -B build && shipyard-ctest --test-dir build`.
 enable_testing()
 find_program(BATS_EXECUTABLE bats)
 if(BATS_EXECUTABLE)
