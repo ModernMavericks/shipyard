@@ -1,7 +1,15 @@
 #!/bin/sh
-# The promoted notes builder: one implementation, product name as an argument. Guarantees a non-empty
-# file (the appcast signer and publish-release.yml both reject an empty one) and never edits a
-# committed note in place.
+# release-notes-file.sh is a back-compat DELEGATING wrapper around release-notes.sh (the generator).
+# Its own job is narrow, and this file tests only that job:
+#   - forward the unchanged TAG/FULL/PRODUCT signature
+#   - translate the family's older "Mavericks X" / "X for Mavericks" product phrasing to the
+#     generator's bare noun
+#   - keep the generator's own stdout progress line ("release-notes: wrote ...") off the WRAPPER's
+#     stdout, since callers capture that stdout as a PATH (NOTES="$(sh ... )")
+#   - hand back a TEMP file, never editing a committed release-notes/<TAG>.md in place
+# What a generated body actually CONTAINS -- titles, upstream links, ingredient sections, footers -- is
+# release-notes.sh's contract, tested exhaustively in tests/release-notes-test.sh. Duplicating that here
+# would only let the two drift.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/release-notes-file.sh"
@@ -9,57 +17,67 @@ w="$(mktemp -d "${TMPDIR:-/tmp}/release-notes-file-t.XXXXXX")"; trap 'rm -rf "$w
 cd "$w"
 git init -q -b main .
 git config user.email t@example.com; git config user.name tester
-mkdir -p release-notes components/golang .github/workflows
-printf '1.26.4-mavericks.3\n' > components/golang/version
-cat > .github/workflows/repackage-on-ingredient-bump.yml <<'YML'
-on:
-  push:
-    paths: ['components/**']
-jobs:
-  repackage:
-    with:
-      own-upstream-paths: ""
-YML
+mkdir -p release-notes
 printf 'x\n' > UPSTREAM_VERSION
-git add -A; git commit -qm base; git tag 1.0.0-mavericks.1
+git add -A; git commit -qm base
 export MAVERICKS_ROOT="$w"
 
-# absent note -> a non-empty default naming the product and the version, in a TEMP file
-p="$(sh "$S" 2.0.0-mavericks.1 2.0.0-mavericks.1 'Mavericks Go')"
-case "$p" in */release-notes/*) echo "FAIL absent should be temp: $p"; exit 1;; esac
-[ -s "$p" ] || { echo "FAIL generated empty"; exit 1; }
-grep -q '2.0.0' "$p" || { echo "FAIL missing version"; cat "$p"; exit 1; }
-grep -q 'Mavericks Go' "$p" || { echo "FAIL missing product name"; cat "$p"; exit 1; }
+# All the calls below use a SELF-upstream tag (TAG == FULL, no "-mavericks." axis): that sidesteps the
+# generator's hook/tag/ingredient machinery entirely (no build/upstream-release-notes-url.sh or
+# repackage-on-ingredient-bump.yml needed), which is exactly right for a test of the WRAPPER's own
+# plumbing rather than the generator's.
+
+# --- the stdout contract: exactly one line, a path to a non-empty file. The generator's own progress
+# line must land on the wrapper's STDERR, never mixed into what a caller captures as $NOTES.
+sh "$S" 20260911.1 20260911.1 Porthole >"$w/out.log" 2>"$w/err.log"
+[ "$(wc -l < "$w/out.log" | tr -d ' ')" = 1 ] \
+  || { echo "FAIL stdout: expected exactly one line"; cat -A "$w/out.log"; exit 1; }
+p="$(cat "$w/out.log")"
+[ -s "$p" ] || { echo "FAIL stdout: '$p' is not a non-empty file"; exit 1; }
+grep -q 'release-notes: wrote' "$w/err.log" \
+  || { echo "FAIL stdout: generator's progress line never appeared (on stderr or anywhere)"; exit 1; }
+grep -q 'release-notes: wrote' "$w/out.log" \
+  && { echo "FAIL stdout: generator's progress line leaked onto the wrapper's stdout"; exit 1; }
 rm -f "$p"
 
-# a committed note supplies the prose, is returned as a TEMP copy, and is never edited in place
-printf '## Hand-written\n\nProse that must survive.\n' > release-notes/1.0.0-mavericks.2.md
+# --- a committed note supplies the prose, is returned as a TEMP copy, and is never edited in place
+printf '## Hand-written\n\nProse that must survive.\n' > release-notes/20260911.2.md
 git add -A; git commit -qm notes
-before="$(git hash-object release-notes/1.0.0-mavericks.2.md)"
-p="$(sh "$S" 1.0.0-mavericks.2 1.0.0-mavericks.2 'Product')"
+before="$(git hash-object release-notes/20260911.2.md)"
+p="$(sh "$S" 20260911.2 20260911.2 Porthole 2>/dev/null)"
 case "$p" in */release-notes/*) echo "FAIL committed should be temp: $p"; exit 1;; esac
-head -1 "$p" | grep -q 'Hand-written' || { echo "FAIL prose not preserved"; cat "$p"; exit 1; }
-[ "$before" = "$(git hash-object release-notes/1.0.0-mavericks.2.md)" ] \
+grep -q 'Hand-written' "$p" || { echo "FAIL prose not preserved"; cat "$p"; exit 1; }
+grep -q 'Prose that must survive' "$p" || { echo "FAIL prose not preserved"; cat "$p"; exit 1; }
+[ "$before" = "$(git hash-object release-notes/20260911.2.md)" ] \
   || { echo "FAIL committed note edited in place"; exit 1; }
+rm -f "$p"
 
-# the ingredient section is appended when a pin moved since the previous release
-printf '1.26.5-mavericks.1\n' > components/golang/version
-p2="$(sh "$S" 1.0.0-mavericks.2 1.0.0-mavericks.2 'Product')"
-grep -q '### Build ingredients' "$p2" || { echo "FAIL no ingredient section"; cat "$p2"; exit 1; }
-grep -q '1.26.4-mavericks.3 -> 1.26.5-mavericks.1' "$p2" || { echo "FAIL pin delta missing"; cat "$p2"; exit 1; }
-head -1 "$p2" | grep -q 'Hand-written' || { echo "FAIL prose lost when appending"; exit 1; }
-rm -f "$p" "$p2"
+# --- PRODUCT translation: the family's older prose phrasing reduces to the generator's bare noun
+p="$(sh "$S" 20260911.3 20260911.3 'Mavericks Go' 2>/dev/null)"
+grep -q '^## Go 20260911.3$' "$p" || { echo "FAIL 'Mavericks Go' should strip to 'Go'"; cat "$p"; exit 1; }
+rm -f "$p"
+p="$(sh "$S" 20260911.4 20260911.4 'OpenSSH for Mavericks' 2>/dev/null)"
+grep -q '^## OpenSSH 20260911.4$' "$p" \
+  || { echo "FAIL 'OpenSSH for Mavericks' should strip to 'OpenSSH'"; cat "$p"; exit 1; }
+rm -f "$p"
 
-# with the repo's hook, a NEW upstream links upstream's notes -- ahead of the ingredient facts
-mkdir -p build
-printf '#!/bin/sh\nprintf "https://example.com/v%%s\\n" "$1"\n' > build/upstream-release-notes-url.sh
-p="$(sh "$S" 2.0.0-mavericks.1 2.0.0-mavericks.1 'Product')"
-grep -qF '(https://example.com/v2.0.0)' "$p" || { echo "FAIL no upstream link"; cat "$p"; exit 1; }
-u="$(grep -n '### Upstream' "$p" | cut -d: -f1)"; i="$(grep -n '### Build ingredients' "$p" | cut -d: -f1)"
-[ "$u" -lt "$i" ] || { echo "FAIL upstream section should precede ingredients"; cat "$p"; exit 1; }
-# ...and a repackage of an upstream already shipped does not
-p2="$(sh "$S" 1.0.0-mavericks.2 1.0.0-mavericks.2 'Product')"
-! grep -q '### Upstream' "$p2" || { echo "FAIL repackage linked upstream notes"; cat "$p2"; exit 1; }
-rm -f "$p" "$p2"
+# --- omitted PRODUCT keeps the documented default
+p="$(sh "$S" 20260911.5 20260911.5 2>/dev/null)"
+grep -q '^## ModernMavericks 20260911.5$' "$p" || { echo "FAIL default product missing"; cat "$p"; exit 1; }
+rm -f "$p"
 
 echo "PASS: release-notes-file (shared)"
+
+# The wrapper now delegates to release-notes.sh, so a repo that has not migrated still gets the family
+# shape: its output must pass check-release-notes.sh.
+w2="$(mktemp -d "${TMPDIR:-/tmp}/rnf-delegate.XXXXXX")"
+mkdir -p "$w2/build"
+( cd "$w2" && git init -q -b main . && git config user.email t@example.com && git config user.name tester \
+   && printf '9.9p2\n' > UPSTREAM_VERSION \
+   && printf '#!/bin/sh\nprintf "https://example.com/%%s\\n" "$1"\n' > build/upstream-release-notes-url.sh \
+   && git add -A && git commit -qm base && git tag 9.9p2-mavericks.1 )
+p="$(cd "$w2" && MAVERICKS_ROOT="$w2" sh "$here/../scripts/release-notes-file.sh" 9.9p2-mavericks.1 9.9p2-mavericks.1 OpenSSH)"
+[ -s "$p" ] || { echo "FAIL delegate: empty file at '$p'"; exit 1; }
+sh "$here/../scripts/check-release-notes.sh" "$p" 9.9p2-mavericks.1 >/dev/null \
+  || { echo "FAIL delegate: wrapper output is not the family shape"; cat "$p"; exit 1; }
+rm -rf "$w2"
