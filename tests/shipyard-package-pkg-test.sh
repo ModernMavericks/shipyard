@@ -11,10 +11,17 @@ PREFIX=usr/local/mavericks-shipyard
 
 # Declared arches: both, exactly once, on a real line.
 [ "$(code | grep -c -- '--host-arch x86_64,arm64')" = 1 ] || { echo "FAIL: package-pkg.sh must pass --host-arch x86_64,arm64 exactly once"; exit 1; }
-# The superseded machinery is gone.
-for gone in register-with-cmake sysctl CrossUpdater agent-load-cross uname; do
+# The superseded machinery is gone. CrossUpdater is NOT on this list any more: the preinstall has to
+# name it once, to delete it off boxes that installed the two-updater design (R-P1-24). Once, and only
+# to remove -- never to stage or install one.
+for gone in register-with-cmake sysctl agent-load-cross uname; do
   code | grep -q -- "$gone" && { echo "FAIL: package-pkg.sh still mentions $gone"; exit 1; }
 done
+[ "$(code | grep -c '^rm -rf .*CrossUpdater')" = 1 ] \
+  || { echo "FAIL: the preinstall must remove MavericksShipyardCrossUpdater.app exactly once (rm -rf); got $(code | grep -c '^rm -rf .*CrossUpdater')"; exit 1; }
+# Every other mention must be the diagnostic that removal prints. Nothing may stage, copy or link one.
+stray="$(code | grep 'CrossUpdater' | grep -vE '^rm -rf |^[[:space:]]*\|\| echo ' || true)"
+[ -z "$stray" ] || { echo "FAIL: CrossUpdater appears outside its one-time removal: $stray"; exit 1; }
 # The three commands, as RELATIVE symlinks into the prefix. The target is checked literally, not just
 # the link name: an absolute /usr/local/mavericks-shipyard/bin/... target points at the boot volume no
 # matter which volume Installer is writing to, so an install to any other volume gets three dead links.
@@ -32,11 +39,30 @@ done
 sh "$S" --emit-preinstall "$w/preinstall"
 [ -s "$w/preinstall" ] || { echo "FAIL: --emit-preinstall wrote nothing"; exit 1; }
 
+AGENTS=Library/LaunchAgents
+APPS="Library/Application Support/ModernMavericks"
+LEGACY_PLIST="$AGENTS/dev.modernmavericks.mavericks-shipyard-cross-updatecheck.plist"
+LEGACY_APP="$APPS/MavericksShipyardCrossUpdater.app"
+
 lay_down_previous() {  # $1 = volume root: a previous install plus the neighbours it must not touch
   rm -rf "$1"
   mkdir -p "$1/$PREFIX/bin" "$1/usr/local/mavericks-shipyard-other" "$1/usr/local/other" "$1/usr/local/bin"
   touch "$1/$PREFIX/bin/cmake" "$1/$PREFIX/dropped-in-a-newer-version" \
         "$1/usr/local/mavericks-shipyard-other/keep" "$1/usr/local/other/keep" "$1/usr/local/bin/keep"
+}
+
+# What v1.0.151 left on an Apple Silicon box: the CROSS updater and its agent, kept by the old
+# postinstall's arch pick. Plus the neighbours that must survive -- including the plain-named updater
+# and agent this version installs, whose names differ from the legacy pair by one word.
+lay_down_legacy() {  # $1 = volume root
+  mkdir -p "$1/$AGENTS" "$1/$APPS/$(basename "$LEGACY_APP")/Contents/MacOS" \
+           "$1/$APPS/MavericksShipyardUpdater.app/Contents/MacOS" "$1/$APPS/SomeOtherProduct.app"
+  touch "$1/$LEGACY_PLIST" \
+        "$1/$LEGACY_APP/Contents/MacOS/MavericksShipyardCrossUpdater" \
+        "$1/$AGENTS/dev.modernmavericks.mavericks-shipyard-updatecheck.plist" \
+        "$1/$AGENTS/dev.modernmavericks.something-else.plist" \
+        "$1/$APPS/MavericksShipyardUpdater.app/Contents/MacOS/MavericksShipyardUpdater" \
+        "$1/$APPS/SomeOtherProduct.app/keep"
 }
 # BOTH spellings of $3. Installer passes "/" for the boot volume, so a trailing slash must not double
 # up into "//usr/local/..."; a path without one must work too, and only one of the two was covered.
@@ -51,6 +77,38 @@ for volarg in "$w/vol" "$w/vol/"; do
   [ -f "$w/vol/usr/local/other/keep" ] && [ -f "$w/vol/usr/local/bin/keep" ] \
     || { echo "FAIL: preinstall ($volarg) removed a neighbour under usr/local"; exit 1; }
 done
+
+# The one-time migration off the two-updater design (R-P1-24). Up to v1.0.151 an Apple Silicon box was
+# left running MavericksShipyardCrossUpdater.app under ...-cross-updatecheck; Installer never removes
+# what a newer payload no longer carries, so without this such a box would run TWO Sparkle updaters
+# against one appcast, daily, forever -- invisibly, because both would work.
+for volarg in "$w/vol" "$w/vol/"; do
+  lay_down_previous "$w/vol"; lay_down_legacy "$w/vol"
+  rc=0; out="$(sh "$w/preinstall" /fake.pkg "$volarg" "$volarg" 2>&1)" || rc=$?
+  [ "$rc" -eq 0 ] || { echo "FAIL: preinstall ($volarg) with the legacy pair present exited $rc: $out"; exit 1; }
+  [ ! -e "$w/vol/$LEGACY_PLIST" ] \
+    || { echo "FAIL: preinstall ($volarg) left the superseded cross-updater LaunchAgent; it would keep checking the same appcast"; exit 1; }
+  [ ! -e "$w/vol/$LEGACY_APP" ] \
+    || { echo "FAIL: preinstall ($volarg) left MavericksShipyardCrossUpdater.app"; exit 1; }
+  # ...and EXACTLY those two. The names it must not touch differ by one word.
+  [ -f "$w/vol/$AGENTS/dev.modernmavericks.mavericks-shipyard-updatecheck.plist" ] \
+    || { echo "FAIL: preinstall ($volarg) removed THIS version's own LaunchAgent"; exit 1; }
+  [ -f "$w/vol/$APPS/MavericksShipyardUpdater.app/Contents/MacOS/MavericksShipyardUpdater" ] \
+    || { echo "FAIL: preinstall ($volarg) removed MavericksShipyardUpdater.app, the updater this version installs"; exit 1; }
+  [ -f "$w/vol/$AGENTS/dev.modernmavericks.something-else.plist" ] \
+    || { echo "FAIL: preinstall ($volarg) removed another product's LaunchAgent"; exit 1; }
+  [ -f "$w/vol/$APPS/SomeOtherProduct.app/keep" ] \
+    || { echo "FAIL: preinstall ($volarg) removed another product's app"; exit 1; }
+  [ -d "$w/vol/$APPS" ] || { echo "FAIL: preinstall ($volarg) removed the shared ModernMavericks app dir"; exit 1; }
+done
+
+# A box that never had the legacy pair -- every 10.9 install, and every install from here on. Nothing
+# to migrate is not an error, and the migration must not invent one.
+lay_down_previous "$w/vol"
+mkdir -p "$w/vol/$AGENTS" "$w/vol/$APPS"
+rc=0; out="$(sh "$w/preinstall" /fake.pkg "$w/vol" "$w/vol" 2>&1)" || rc=$?
+[ "$rc" -eq 0 ] || { echo "FAIL: preinstall with no legacy pair to remove must exit 0; got $rc: $out"; exit 1; }
+[ -z "$out" ] || { echo "FAIL: preinstall with nothing to migrate must say nothing; got: $out"; exit 1; }
 
 # A first install: there is nothing to clear, which is not an error.
 rm -rf "$w/vol"; mkdir -p "$w/vol/usr/local"
