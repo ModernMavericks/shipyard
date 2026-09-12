@@ -20,8 +20,9 @@ def fail(msg):
     print("FAIL: " + msg); sys.exit(1)
 
 # Strip whole-line comments and join backslash continuations before matching: a call left inside a
-# comment (or behind `if: false`) must not read as "wired in" -- Task 4's fixture passed for the wrong
-# reason once already, because the check it was supposed to prove had silently stopped running.
+# comment (or behind `if: false` / the equivalent `if: ${{ false }}` expression form) must not read as
+# "wired in" -- Task 4's fixture passed for the wrong reason once already, because the check it was
+# supposed to prove had silently stopped running.
 def step_cmds(step):
     lines = [l for l in (step.get("run") or "").splitlines() if not l.lstrip().startswith("#")]
     joined = re.sub(r"\\\s*\n\s*", " ", "\n".join(lines))
@@ -31,20 +32,40 @@ assets = [s for s in steps if s.get("id") == "assets"]
 if not assets:
     fail("no step with id 'assets' -- the release-assets.sh step was renamed or removed")
 a = assets[0]
-if str(a.get("if", "")).strip().lower() == "false":
+if_norm = re.sub(r"\s+", "", str(a.get("if", ""))).lower()
+if if_norm in ("false", "${{false}}"):
     fail("the assets step is disabled (if: false)")
 
 cmds = step_cmds(a)
 
-ra = [i for i, c in enumerate(cmds) if "release-assets.sh" in c]
+# The literal path, not just the script's basename: publish-release.yml checks out ONLY shipyard, into
+# .shipyard/ (the product repo itself is never checked out here) -- "scripts/check-release-notes.sh"
+# with no .shipyard/ prefix does not exist on this runner and exits 127, stranding every release in the
+# family. Task 4 already learned this lesson once: only literal paths compare.
+ra = [i for i, c in enumerate(cmds) if ".shipyard/scripts/release-assets.sh" in c]
 if not ra:
-    fail("the assets step no longer calls release-assets.sh")
+    fail("the assets step no longer calls .shipyard/scripts/release-assets.sh")
 
 crn = [i for i, c in enumerate(cmds)
-       if re.search(r'check-release-notes\.sh\s+"?dist/\$NOTES"?\s+"?\$VERSION"?', c)]
+       if re.search(r'\.shipyard/scripts/check-release-notes\.sh\s+"?dist/\$NOTES"?\s+"?\$VERSION"?', c)]
 if not crn:
-    fail('the assets step does not call check-release-notes.sh on "dist/$NOTES" "$VERSION" -- '
+    fail('the assets step does not call .shipyard/scripts/check-release-notes.sh on "dist/$NOTES" "$VERSION" -- '
          "a copied notes file under a new tag would pass every other check and announce its predecessor")
+
+crn_line = cmds[crn[0]]
+
+# A call that is wired in but neutered validates nothing while looking green. This is the likeliest
+# regression this file will ever see: someone holding a finished, signed build the publisher just
+# refused reaches for `|| true` to unblock it. Plan 1 existed to delete exactly this kind of silencer
+# (`|| true` and `2>/dev/null`) from the notes path -- openssh never listed an ingredient and
+# signal-desktop shipped a new upstream with no link because of it -- so this enforcement step is the
+# one place that regression is least excusable.
+if re.search(r"\|\|\s*(true|:)\s*(;|$)", crn_line):
+    fail("check-release-notes.sh is neutered with || true/|| : -- a refused body would still ship")
+if re.search(r";\s*true\s*$", crn_line):
+    fail("check-release-notes.sh is neutered with a trailing ; true -- a refused body would still ship")
+if str(a.get("continue-on-error", "")).strip().lower() == "true":
+    fail("the assets step is continue-on-error: true -- check-release-notes.sh failing would not fail the job")
 
 if crn[0] < ra[0]:
     fail("check-release-notes.sh runs before release-assets.sh -- validating a file not yet proven to exist")
