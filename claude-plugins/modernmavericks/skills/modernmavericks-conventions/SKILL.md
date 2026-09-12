@@ -1067,6 +1067,20 @@ in the same commit.
    with one pinned, contributors got an update only when someone remembered to bump it (three bumps
    against ten-plus skill edits left installs 200 lines behind).
 
+   **When a human has to act, in general.** A marketplace's catalog refreshes only three ways: the
+   background auto-update task (shortly after session start), an explicit `claude plugin marketplace
+   update <name>` / `/plugin`, or installing `plugin@marketplace`, which forces one. Auto-update is ON
+   for Anthropic's own marketplace and OFF for every third-party and local one — ours is third-party,
+   which is why the toggle is a step at all. It cannot be set from a repo: the per-marketplace
+   `autoUpdate` field is honoured only in MANAGED (enterprise) settings. So someone must act when:
+   - a contributor is new to the marketplace (install once, enable auto-update once);
+   - the plugin declares a `version` (nothing ships until it is bumped — hence ours has none);
+   - a change is needed in the CURRENT session (refresh, then `/reload-plugins` or restart; `-p`
+     sessions can reload only on 2.1.260+);
+   - refresh is suppressed — `DISABLE_AUTOUPDATER`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, a
+     seeded plugin dir, managed settings blocking the marketplace, or being offline.
+   Docs: code.claude.com/docs/en/discover-plugins, /plugins-reference, /plugin-marketplaces.
+
 ## Consolidation backlog
 
 The family is mid-consolidation: each item below replaces per-repo machinery with one shared
