@@ -17,6 +17,11 @@ got="$(env -i PATH=/usr/bin:/bin SHIPYARD_SCRIPTS="$w/s" sh -c ". '$T'; printf '
 # 2. No SHIPYARD_SCRIPTS, no shipyard-cmake: fail, saying what to install.
 if msg="$(env -i PATH=/usr/bin:/bin sh -c ". '$T'" 2>&1)"; then echo "FAIL: must fail with nothing to find"; exit 1; fi
 printf '%s' "$msg" | grep -q 'install the shipyard pkg' || { echo "FAIL: message must say to install the pkg; got: $msg"; exit 1; }
+# A failed probe must leave SHIPYARD EMPTY, never the literal "/scripts" -- an absolute path that
+# exists on no box, but looks like one, and would send the reader looking for the wrong problem.
+got="$(env -i PATH=/usr/bin:/bin sh -c ". '$T' >/dev/null 2>&1; printf '%s' \"\$SHIPYARD\"" || true)"
+[ "$got" != "/scripts" ] || { echo "FAIL: a failed probe set SHIPYARD to the literal '/scripts'"; exit 1; }
+[ -z "$got" ] || { echo "FAIL: a failed probe must leave SHIPYARD empty; got '$got'"; exit 1; }
 
 # 3. The probe: a shipyard-cmake on PATH (fixture prefix, as in the refusal test) is asked.
 real="$(command -v cmake 2>/dev/null)" || { echo "SKIP: no cmake for the probe case"; exit 77; }
