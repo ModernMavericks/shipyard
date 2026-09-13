@@ -603,6 +603,44 @@ sed 's|--notes-file dist/RELEASE_NOTES\.md|--notes-file "$NOTES" --notes-file re
 if out="$(cd "$work/g12c" && sh "$S" 2>&1)"; then echo "FAIL a literal mismatch alongside a variable one should still fail"; exit 1; fi
 printf '%s\n' "$out" | grep -q 'release-notes/README.md' || { echo "FAIL should name the literal mismatch: $out"; exit 1; }
 
+# A flag and its value need not share a line. Reproduced against openssh's real main by changing
+# nothing but whitespace: the captured --out value became the backslash, the .md filter dropped it,
+# and the repo was told to "pass the same path release-notes.sh was given as --out" -- which it did.
+# No repo wraps this way today, so this is a cosmetic reformat away, not live; a reformat must not
+# redden a repo.
+mkrepo "$work/g17"
+sed 's|--product Widget --min-os 10.9.5 --out dist/RELEASE_NOTES\.md|--product Widget --min-os 10.9.5 \\\
+            --out \\\
+            dist/RELEASE_NOTES.md|' "$work/ok/.github/workflows/release.yml" > "$work/g17/.github/workflows/release.yml"
+grep -q '^ *--out \\$' "$work/g17/.github/workflows/release.yml" \
+  || { echo "FAIL test setup did not produce a line-wrapped --out"; exit 1; }
+(cd "$work/g17" && sh "$S" >/dev/null) || { echo "FAIL a line-wrapped --out value should pass"; exit 1; }
+
+# ...the same on the reading side, which wraps just as legally. A block scalar, because that is where
+# a wrapped shell command can legally live: folding a plain `run:` scalar over two lines would change
+# what the shell is handed, and a fixture has to be a repo someone could really write.
+mkrepo "$work/g17b"
+grep -v 'notes-file' "$work/ok/.github/workflows/release.yml" > "$work/g17b/.github/workflows/release.yml"
+cat >> "$work/g17b/.github/workflows/release.yml" <<'YML'
+      - run: |
+          gh release create "$TAG" dist/* --notes-file \
+            dist/RELEASE_NOTES.md
+YML
+(cd "$work/g17b" && sh "$S" >/dev/null) || { echo "FAIL a line-wrapped --notes-file value should pass"; exit 1; }
+
+# ...and joining the continuation must not be a way to switch the comparison off: a WRONG path,
+# wrapped, still fails and is still named. Without this, "wrapped values are skipped" would pass the
+# two cases above while checking nothing.
+mkrepo "$work/g17c"
+grep -v 'notes-file' "$work/ok/.github/workflows/release.yml" > "$work/g17c/.github/workflows/release.yml"
+cat >> "$work/g17c/.github/workflows/release.yml" <<'YML'
+      - run: |
+          gh release create "$TAG" dist/* --notes-file \
+            release-notes/README.md
+YML
+if out="$(cd "$work/g17c" && sh "$S" 2>&1)"; then echo "FAIL a wrapped notes path the generator never wrote should fail"; exit 1; fi
+printf '%s\n' "$out" | grep -q 'release-notes/README.md' || { echo "FAIL should name the wrapped mismatch: $out"; exit 1; }
+
 # 1password, ed25519, signal-desktop and swift-toolchain pass no --notes-file at all: they stage no
 # appcast from the notes. The subset loop is then empty, which is correct and not a gap.
 mkrepo "$work/g8"

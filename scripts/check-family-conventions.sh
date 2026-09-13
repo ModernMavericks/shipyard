@@ -566,8 +566,37 @@ if [ -n "$CI_FILES" ]; then
     # that also carries code still counts, which is what keeps container-tools' commented --out.
     # -e for the same reason ci_mentions uses it: a pattern starting with '-' is not a grep flag.
     # `[ =]` and not just a space, which also keeps --out-dir and --output out of the --out set.
+    #
+    # SHELL LINE CONTINUATIONS ARE JOINED FIRST, because a flag and its value need not share a line:
+    #
+    #     --product OpenSSH --min-os 10.9.5 \
+    #       --out \
+    #       dist/RELEASE_NOTES.md
+    #
+    # is the same command as the one every repo writes today, but the value the pattern captures is
+    # the backslash. The .md filter then drops it, `outs` loses dist/RELEASE_NOTES.md entirely, and
+    # clause 4 tells a correct repo to "pass the same path release-notes.sh was given as --out" --
+    # which it did. Reproduced against openssh's real main by changing nothing but whitespace. No repo
+    # wraps this way today, so this is not live; a cosmetic reformat must still not redden a repo.
+    #
+    # Joining rather than skipping: the value IS a literal path, so it is comparable and the clause
+    # stays on. Skipping a wrapped --out would switch the comparison off for the whole repo, which is
+    # the cost clause 4 already pays for genuinely unresolvable values and should not pay twice.
+    #
+    # After the comment filter, deliberately: dropping comment lines is what keeps a repo documenting
+    # the ban from failing it, and that rule wins. The residual is a comment line ending in a
+    # backslash, which would join the two code lines around it -- rarer than the shape this fixes.
     # shellcheck disable=SC2086  # CI_FILES is a deliberate word-split list of paths
     grep -hv '^[[:space:]]*#' $CI_FILES 2>/dev/null \
+      | awk '
+          { if (buf != "") sub(/^[[:space:]]+/, "") }     # the indent of a continuation line is not data
+          /\\[[:space:]]*$/ {
+            sub(/\\[[:space:]]*$/, ""); sub(/[[:space:]]+$/, "")
+            buf = buf $0 " "                              # exactly one space: two would capture ""
+            next
+          }
+          { print buf $0; buf = "" }
+          END { if (buf != "") print buf }' \
       | grep -o -e "$1[ =][\"']\{0,1\}[^ \"']*" \
       | sed "s/^$1[ =][\"']\{0,1\}//" | sort -u
   }
@@ -595,8 +624,14 @@ if [ -n "$CI_FILES" ]; then
     # it and, through the moving @v1 tag, twelve others; clause 2 still catches a hand-written body
     # there, and a false negative is the cheap direction. But a repo that genuinely hands its appcast
     # a different file than it publishes, routed through variables, is invisible to this clause.
+    #
+    # A backslash is in the list for the same reason, as a backstop rather than as the fix: strip_arg
+    # joins shell line continuations, so a wrapped `--notes-file \` / value pair is captured whole and
+    # IS comparable. Should any wrapping shape still reach here as a bare `\`, it is a value that is
+    # not a literal path, and clause 4 skips what it cannot compare rather than failing a repo for how
+    # it wrapped its lines.
     case "$n" in
-      *'$'*|*'{'*) continue ;;
+      *'$'*|*'{'*|*'\'*) continue ;;
     esac
     # -x, not a bare -F: without it a --notes-file that is a strict SUFFIX of a real --out value
     # (NOTES.md against dist/RELEASE_NOTES.md) matches as a substring, and a genuinely different
