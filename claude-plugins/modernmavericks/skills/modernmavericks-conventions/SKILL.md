@@ -1155,6 +1155,16 @@ Scoping is the point: swift-toolchain republishing swift.org's `.pkg` must not l
 build-support tarball it *does* build to drift. An unscoped deviation quietly covers artifacts nobody
 meant to excuse.
 
+**A truncated fact stream fails.** The two scripts run as a pipeline
+(`artifact-facts.sh dist "$v" | check-artifact-conformance.sh`); a pipeline's exit status is its LAST
+command's and no workflow sets `pipefail`, so the producer dying does not fail the step — it just
+cuts the stream short, and every check here is a "stay quiet when there are no records" check. So
+`artifact-facts.sh` ends a successful run with an `end-of-facts` record and the checker refuses a
+stream that lacks it (no deviation can excuse that one, since deviations are emitted early enough to
+survive a truncation); a deliberate give-up emits `abort <reason>` first, so the operator reads why.
+A dist with an empty `RELEASE_NOTES.md` once printed "conformance: ok" while its appcast described
+other notes and pointed at another release's file.
+
 ## A "transitional" decision without an exit task is a permanent one
 
 When a review accepts something as transitional — "for now", "until X is

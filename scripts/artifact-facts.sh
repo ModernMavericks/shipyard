@@ -12,6 +12,30 @@ dist="${1:?artifact-facts: dist directory required}"
 version="${2:?artifact-facts: version required}"
 root="${3:-$(pwd)}"
 
+# WHY THIS SCRIPT ENDS WITH A SENTINEL, and why every deliberate exit emits a record first.
+#
+# Every consumer runs us upstream of a pipe:
+#     sh artifact-facts.sh dist "$VER" | sh check-artifact-conformance.sh
+# A pipeline's exit status is its LAST command's, and no consumer sets pipefail (GitHub's default
+# `run:` shell is `bash -e {0}` -- errexit WITHOUT pipefail). So OUR exit status is DISCARDED: dying
+# here does not fail the step, it merely TRUNCATES the stream. Every check in the checker is a "stay
+# quiet when there are no records" check, and RELEASE_NOTES.md sorts first in dist/*, so a truncation
+# lands before any pkg, appcast, enclosure-url or build-info record is emitted -- and the checker
+# cheerfully prints "conformance: ok". A real dist with an empty RELEASE_NOTES.md, an appcast whose
+# description was unrelated text and an enclosure naming a file in another release passed exactly
+# that way; the whole layer was off in the 8 repos that run it.
+#
+# Fixing the enumerated cause (the --render-notes exits below) would not fix the SHAPE. So: a
+# successful run ends with `end-of-facts`, and the checker refuses a stream that lacks it. That
+# catches truncation from ANY cause -- a future `set -eu` death, a full disk, a signal -- not a list
+# of known-bad exits. `abort` carries the human-readable reason across the pipe so the operator reads
+# WHY rather than only "the stream stopped".
+abort() {  # $1 = why. A RECORD (so it survives the pipe) plus a line on stderr (for our own log).
+  printf 'abort %s\n' "$1"
+  echo "artifact-facts: $1" >&2
+  exit 1
+}
+
 printf 'expected %s\n' "$version"
 
 # A repo shipping parallel upstream lines names the line in every identity. The line is the NAME of the
@@ -94,9 +118,9 @@ for f in "$dist"/*; do
       # to sha256-of-empty -- one of two ways this comparison could pass by both sides being broken
       # the same way. Check success and non-emptiness explicitly before digesting.
       render="$(sh "$(dirname "$0")/gen_appcast.sh" --render-notes "$f")" \
-        || { echo "artifact-facts: gen_appcast.sh --render-notes failed for $b" >&2; exit 1; }
+        || abort "gen_appcast.sh --render-notes failed for $b"
       [ -n "$render" ] \
-        || { echo "artifact-facts: gen_appcast.sh --render-notes produced no output for $b" >&2; exit 1; }
+        || abort "gen_appcast.sh --render-notes produced no output for $b"
       printf 'notes-render %s %s\n' "$b" "$(printf '%s\n' "$render" | shasum -a 256 | cut -d' ' -f1)"
       ;;
     build-info*)
@@ -140,3 +164,8 @@ for f in "$dist"/*; do
       ;;
   esac
 done
+
+# The completion sentinel, and nothing after it: reaching this line is the ONLY way it is printed, so
+# its presence in the stream means every record above it was emitted. See the abort() block above for
+# why a truncated stream cannot be caught any other way.
+printf 'end-of-facts\n'

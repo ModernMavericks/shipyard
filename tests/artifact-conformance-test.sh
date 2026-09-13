@@ -8,11 +8,15 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 S="$here/../scripts/check-artifact-conformance.sh"
 
+# Both helpers append the completion sentinel that artifact-facts.sh ends a successful run with, so
+# every fixture below stays about the one fact it is probing rather than restating the sentinel. The
+# sentinel's own behaviour is tested at the end of this file, by fixtures that bypass these helpers --
+# appending it here would otherwise make "the checker requires a sentinel" untestable through them.
 ok() {  # facts on stdin must pass
-  printf '%s\n' "$2" | sh "$S" >/dev/null 2>&1 || { echo "FAIL $1: expected pass"; exit 1; }
+  printf '%s\nend-of-facts\n' "$2" | sh "$S" >/dev/null 2>&1 || { echo "FAIL $1: expected pass"; exit 1; }
 }
 no() {  # facts on stdin must fail, and name the check
-  out="$(printf '%s\n' "$3" | sh "$S" 2>&1)" && { echo "FAIL $1: expected failure"; exit 1; }
+  out="$(printf '%s\nend-of-facts\n' "$3" | sh "$S" 2>&1)" && { echo "FAIL $1: expected failure"; exit 1; }
   printf '%s\n' "$out" | grep -qi "$2" || { echo "FAIL $1: should mention '$2', got: $out"; exit 1; }
 }
 
@@ -221,13 +225,15 @@ out="$(printf '%s\n' 'expected 1.0.0-mavericks.1
 build-info build-info-a.txt commit abc
 build-info build-info-b.txt commit abc
 pkg p.pkg 1.0.0-mavericks.1 10.9.5 dev.modernmavericks.x
-asset p.pkg 10' | sh "$S")"
+asset p.pkg 10
+end-of-facts' | sh "$S")"
 printf '%s\n' "$out" | grep -qi 'compared 2' \
   || { echo "FAIL should say how many records it compared; got: $out"; exit 1; }
 
 out="$(printf '%s\n' 'expected 1.0.0-mavericks.1
 pkg p.pkg 1.0.0-mavericks.1 10.9.5 dev.modernmavericks.x
-asset p.pkg 10' | sh "$S")"
+asset p.pkg 10
+end-of-facts' | sh "$S")"
 printf '%s\n' "$out" | grep -qi 'no build records' \
   || { echo "FAIL should say when there was nothing to compare; got: $out"; exit 1; }
 
@@ -435,5 +441,99 @@ fi
 grep -qi 'render-notes' "$_empty_out" \
   || { echo "FAIL: artifact-facts.sh's failure on an empty notes file should name the renderer; got: $(cat "$_empty_out")"; rm -rf "$_empty"; rm -f "$_empty_out"; exit 1; }
 rm -rf "$_empty"; rm -f "$_empty_out"
+
+# --- A TRUNCATED FACT STREAM MUST FAIL, WHATEVER TRUNCATED IT --------------------------------------
+# Refusing the producer's known-bad exits is not enough: the consumers run
+#     artifact-facts.sh dist "$VER" | check-artifact-conformance.sh
+# and a pipeline's exit status is its LAST command's, with no consumer setting pipefail. The
+# producer's exit status is DISCARDED; dying only TRUNCATES the stream, and every check in the
+# checker is a "stay quiet when there are no records" check. So the checker requires the sentinel a
+# successful producer run ends with, and these fixtures bypass ok()/no() (which append it) to say so.
+
+# (1) Every record present and correct, but the stream just stops: that is not a pass.
+_trunc_out="$(printf '%s\n' 'expected 1.0.0-mavericks.1
+pkg p.pkg 1.0.0-mavericks.1 10.9.5 dev.modernmavericks.x
+asset p.pkg 10' | sh "$S" 2>&1)" \
+  && { echo "FAIL: a stream with no end-of-facts sentinel must not pass; got: $_trunc_out"; exit 1; }
+printf '%s\n' "$_trunc_out" | grep -qi 'incomplete' \
+  || { echo "FAIL: a truncated stream should say it is incomplete; got: $_trunc_out"; exit 1; }
+
+# (2) The human-readable cause survives the pipe. "The stream stopped" is true and useless; the
+# operator needs to read WHY, which is what the producer's `abort` record carries.
+_abort_out="$(printf '%s\n' 'expected 1.0.0-mavericks.1
+abort gen_appcast.sh --render-notes failed for RELEASE_NOTES.md' | sh "$S" 2>&1)" \
+  && { echo "FAIL: a stream carrying an abort record must not pass; got: $_abort_out"; exit 1; }
+printf '%s\n' "$_abort_out" | grep -qi 'render-notes failed for RELEASE_NOTES.md' \
+  || { echo "FAIL: the checker should surface the abort reason; got: $_abort_out"; exit 1; }
+
+# (3) A deviation must not be able to switch this off. Deviations are emitted EARLY (from
+# INGREDIENTS.md, before dist/ is walked) so they SURVIVE a truncation -- a product could otherwise
+# declare its way out of the one check that notices every other check was skipped.
+_dev_out="$(printf '%s\n' 'expected 1.0.0-mavericks.1
+deviation end-of-facts we would rather not be checked, thanks
+pkg p.pkg 1.0.0-mavericks.1 10.9.5 dev.modernmavericks.x
+asset p.pkg 10' | sh "$S" 2>&1)" \
+  && { echo "FAIL: a deviation must not excuse a truncated stream; got: $_dev_out"; exit 1; }
+
+# (4) ...and the producer really does end a successful run with it, as the LAST line.
+_sent="$(mktemp -d "${TMPDIR:-/tmp}/af-sentinel.XXXXXX")"
+mkdir -p "$_sent/dist"
+printf 'a\n' > "$_sent/dist/some-asset.txt"
+_sent_facts="$(sh "$AF" "$_sent/dist" 1.0.0-mavericks.1 "$_sent")"
+rm -rf "$_sent"
+[ "$(printf '%s\n' "$_sent_facts" | tail -1)" = "end-of-facts" ] \
+  || { echo "FAIL: artifact-facts.sh must end a successful run with the sentinel; got: $(printf '%s\n' "$_sent_facts" | tail -1)"; exit 1; }
+
+# (5) END TO END, on the real failure rather than a fixture: the exact dist that regressed. An empty
+# RELEASE_NOTES.md kills the producer before dist/*'s later entries (RELEASE_NOTES.md sorts first),
+# so the appcast's unrelated description and its enclosure naming a file in ANOTHER release were
+# never even described -- and the checker printed "conformance: ok". Piped exactly as release.yml
+# pipes it, with no pipefail, this must now be loud.
+_e2e="$(mktemp -d "${TMPDIR:-/tmp}/af-e2e.XXXXXX")"
+mkdir -p "$_e2e/dist"
+: > "$_e2e/dist/RELEASE_NOTES.md"
+cat > "$_e2e/dist/appcast.xml" <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <item>
+      <sparkle:shortVersionString>9.9p2-mavericks.6</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>10.9.5</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+<p>Text that is not this release's notes at all.</p>
+]]></description>
+      <enclosure url="https://github.com/ModernMavericks/openssh/releases/download/9.9p2-mavericks.5/ghost.pkg" length="4096" sparkle:edSignature="x" />
+    </item>
+  </channel>
+</rss>
+XML
+_e2e_out="$(sh "$AF" "$_e2e/dist" 9.9p2-mavericks.6 "$_e2e" 2>/dev/null | sh "$S" 2>&1)" \
+  && { rm -rf "$_e2e"; echo "FAIL: a dist whose producer aborts must fail the pipeline, not pass it; got: $_e2e_out"; exit 1; }
+printf '%s\n' "$_e2e_out" | grep -qi 'render-notes' \
+  || { rm -rf "$_e2e"; echo "FAIL: the end-to-end failure should name the cause; got: $_e2e_out"; exit 1; }
+
+# ...and a NORMAL dist still passes end to end, so the sentinel is not just a way to fail everything.
+mkdir -p "$_e2e/good"
+cat > "$_e2e/good/RELEASE_NOTES.md" <<'NOTES'
+## Summary
+
+A real body.
+
+- Fixed a thing
+NOTES
+# A .tgz rather than a .pkg: a text file with a .pkg name would be reported `unreadable` by pkgutil
+# and fail for a reason this fixture is not about. What it proves is that a COMPLETE run reaches the
+# sentinel and the checker accepts it -- the pkg records have their own fixtures above.
+printf 'payload\n' > "$_e2e/good/thing-9.9p2-mavericks.6.tgz"
+_good_len="$(wc -c < "$_e2e/good/thing-9.9p2-mavericks.6.tgz" | tr -d ' ')"
+sh "$GA" "Test Channel" "9.9p2-mavericks.6" \
+  "https://github.com/ModernMavericks/openssh/releases/download/9.9p2-mavericks.6/thing-9.9p2-mavericks.6.tgz" \
+  "10.9.5" "$_e2e/good/RELEASE_NOTES.md" "sparkle:edSignature=\"x\" length=\"$_good_len\"" \
+  > "$_e2e/good/appcast.xml"
+_good_out="$(sh "$AF" "$_e2e/good" 9.9p2-mavericks.6 "$_e2e" 2>&1 | sh "$S" 2>&1)" \
+  || { rm -rf "$_e2e"; echo "FAIL: a normal dist must still pass end to end; got: $_good_out"; exit 1; }
+printf '%s\n' "$_good_out" | grep -qi 'conformance: ok' \
+  || { rm -rf "$_e2e"; echo "FAIL: a normal dist should report ok; got: $_good_out"; exit 1; }
+rm -rf "$_e2e"
 
 echo "PASS: artifact-conformance"

@@ -18,6 +18,8 @@
 #   notes-render <notes-file> <sha256>                    digest of gen_appcast.sh --render-notes
 #   appcast-notes <appcast-file> [<sha256>]               digest of the appcast's <description> CDATA
 #   deviation  <check> <reason...>                        a declared, reasoned departure
+#   abort      <reason...>                                the producer gave up here, and why
+#   end-of-facts                                          the producer ran to completion (LAST line)
 #
 # Facts rather than files so the agreement logic is testable without fabricating real .pkg files;
 # extraction is thin and exercised for real at package time.
@@ -26,6 +28,37 @@ set -eu
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/conformance.XXXXXX")"; trap 'rm -rf "$tmp"' EXIT  # template: 10.9 BSD mktemp requires one
 facts="$tmp/facts"; cat > "$facts"
+
+# --- THE STREAM IS COMPLETE -----------------------------------------------------------------------
+# FIRST, before anything is judged: every check below is a "stay quiet when there are no records"
+# check, so a stream that simply STOPS passes them all.
+#
+# That is not hypothetical. artifact-facts.sh runs upstream of a pipe in every consumer, a pipeline's
+# exit status is its LAST command's, and no consumer sets pipefail (GitHub's default `run:` shell is
+# `bash -e {0}`: errexit WITHOUT pipefail). The producer's exit status is therefore DISCARDED, and
+# dying merely truncates its output. RELEASE_NOTES.md sorts first in dist/*, so a truncation there
+# lands before any pkg, appcast or enclosure-url record exists -- and a dist with an empty notes
+# file, an appcast describing something else and an enclosure pointing at another release printed
+# "conformance: ok" with everything switched off.
+#
+# So the producer ends a successful run with `end-of-facts` and we refuse a stream without it. This
+# is structural: it catches truncation from ANY cause, not an enumerated list of known-bad exits.
+#
+# Deliberately NOT routed through fail(): a deviation must not be able to excuse it. Deviations are
+# emitted EARLY (they come from INGREDIENTS.md, before dist/ is walked), so they SURVIVE a truncation
+# -- `deviation end-of-facts ...` would switch off the very check that notices the switch-off. And
+# exit, rather than accumulating: with no records there is nothing else worth reporting.
+if ! grep -q '^end-of-facts$' "$facts"; then
+  # abort <reason> is what the producer says on its way out. Surface it: "the stream stopped" is true
+  # but useless; "gen_appcast.sh --render-notes failed for RELEASE_NOTES.md" is actionable.
+  why="$(sed -n 's/^abort \(..*\)$/\1/p' "$facts" | head -1)"
+  if [ -n "$why" ]; then
+    echo "conformance: the fact stream is incomplete -- artifact-facts.sh aborted: $why" >&2
+  else
+    echo "conformance: the fact stream is incomplete -- artifact-facts.sh did not run to completion (no end-of-facts record); nothing was checked" >&2
+  fi
+  exit 2
+fi
 
 status=0
 fail() {  # $1 = check name, $2 = message, $3 = the artifact it concerns (optional)
