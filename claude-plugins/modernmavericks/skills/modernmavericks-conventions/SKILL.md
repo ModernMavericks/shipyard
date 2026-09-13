@@ -619,8 +619,8 @@ which is why publishing is idempotent rather than triggered.
   --digest "$(...)"` writes `ModernMavericks-State: v1:sha256:<hex>` into the notes file **before
   `sign_and_appcast.sh` runs — never at publish time.** That one file is rendered into both the
   Sparkle appcast `<description>` and the GitHub Release body, so writing the marker before packaging
-  keeps them in agreement — a conformance check asserting that equality is in flight in the
-  release-notes work, not something this design can lean on today. The reason stands regardless: a
+  keeps them in agreement — `check-artifact-conformance.sh`'s `notes` check (see Release notes, "Three
+  enforcement layers", above) now asserts that equality at package time. The reason stands regardless: a
   10.9 user's Sparkle update dialog should show the same notes the Release page shows, and a marker
   added later would leave it one line short of that. `release-needed.sh --digest D --version V [--repo R]`
   answers whether that state is already out — `PUBLISH`, `SKIP=already-released/<tag>`, or
@@ -768,16 +768,20 @@ which is why publishing is idempotent rather than triggered.
   | magic-trackpad2 | `Mavericks Trackpad 2` | genuinely self-upstream (`vX.Y.Z`, no `-mavericks.N`) |
 
   (shipyard itself, a caller but not a "product", passes `Shipyard`.)
-- **`--line` takes upstream's VERSION PREFIX, not the `lines/<id>/` directory name.** golang's line
-  directory is `lines/126/`, but its release tags are `1.26.7-mavericks.N`, so `--line` must be `1.26`
-  (derived in `release.yml` as `printf '%s' "$VER" | cut -d. -f1,2`) — the bare `126` matches nothing
-  against `previous-release-tag.sh`'s glob (it compares to real tags like `1.26.*-mavericks.*`), which
-  silently drops both the `### Build ingredients` section and the compare link while
-  `check-release-notes.sh`'s shape check still passes (a title and a `### What changed` are still
-  there). clang's `--line 22` (`${CLANG_LINE:-22}`) is correct only because its own tags happen to
-  start `22.1.1-…` — the directory name and the version prefix coincide there by chance, not by rule.
-  This bit the migration plan itself before it was corrected against the real tags; verify a line's
-  actual tag shape, never assume it matches its directory name.
+- **`--line` takes the prefix the TAGS carry, not the `lines/<id>/` directory name or any other
+  per-repo identifier.** golang's line directory is `lines/126/` and its own product id is `126`, but
+  its release tags are `1.26.7-mavericks.N`, so `--line` must be `1.26` (derived in `release.yml` as
+  `printf '%s' "$VER" | cut -d. -f1,2`) — the identifier used elsewhere (`126`) matches nothing against
+  `previous-release-tag.sh`'s glob (it compares to real tags like `1.26.*-mavericks.*`). **An unmatched
+  glob is now fatal for a repackage**, not a silent drop: `release-notes.sh` refuses to ship a
+  repackage with no compare link and no ingredient section, naming the fix in the failure ("pass the
+  prefix the tags actually carry (1.26, not 126)") rather than publishing a body that only looks
+  complete because the title and `### What changed` are still there. (A brand-new upstream,
+  `-mavericks.1`, has no baseline to be missing and is unaffected.) clang's `--line 22`
+  (`${CLANG_LINE:-22}`) is correct only because its own tags happen to start `22.1.1-…` — the directory
+  name and the version prefix coincide there by chance, not by rule. This bit the migration plan itself
+  before it was corrected against the real tags; verify a line's actual tag shape, never assume it
+  matches its directory name.
 - **`--min-os` must describe what the shipped `.pkg` actually declares, verified against the artifact
   — not assumed from a survey.** A survey got this wrong twice before each repo's real build was
   checked. As migrated:
@@ -828,22 +832,26 @@ which is why publishing is idempotent rather than triggered.
   whether a pin is the repo's own upstream, and `ingredient-pins.sh` had to re-derive that same answer
   from the same YAML and, until this fix, got it wrong. A future split of "decide X" from "act on X
   already decided" needs one shared decision, never two independent parses of the same input.
-- **Deliberately deferred — named here so they read as decisions, not gaps:**
-  - `previous-release-tag.sh`'s baseline glob is hardcoded to `*-mavericks.*`, so a self-upstream repo
-    whose tags never contain that substring — shipyard (`vX.Y.Z`), porthole (`YYYYMMDD.N`),
-    magic-trackpad2 (`vX.Y.Z`) — finds no baseline tag and gets neither a compare link nor a
-    `### Build ingredients` section, even where a real one exists: porthole has four Renovate-tracked
-    ingredient pins (skalibs, s6, the Debian base image, xpra — see its `INGREDIENTS.md`) that its own
-    generated notes can therefore never name.
-  - swift-runtime's `build.sh` carries one pin, `SWIFT_TAG`, that used to be a literal `KEY=VALUE`
-    line and is now a DERIVED expression (`SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"`). The
-    literal-only per-key diff (see "Say which ingredient moved" above) correctly excludes it going
-    forward, but reads its disappearance from the literal form as *removed* rather than as "never a
-    literal to begin with" — one stale "removed" bullet. (`BUILDSUPPORT_ASSET` / `TOOLCHAIN_ASSET`
-    are unaffected: both were already derived expressions before this change, so neither was ever
-    reported as removed.) Same defect family as the `pins.env` false-positive above (a content-shape
-    the sniffer doesn't yet recognize), left untouched here because it under-reports rather than
-    over-claims, which is the lower-severity direction of that bug class.
+- **A self-upstream repo gets a real baseline too, via `--tag-glob`.**
+  `previous-release-tag.sh`'s default glob is `*-mavericks.*`, which never matches a self-upstream
+  repo's own tags — shipyard (`vX.Y.Z`), porthole (`YYYYMMDD.N`), magic-trackpad2 (`vX.Y.Z`) — so those
+  three used to get neither a compare link nor a `### Build ingredients` section, even where a real one
+  existed: porthole has four Renovate-tracked ingredient pins (skalibs, s6, the Debian base image,
+  xpra — see its `INGREDIENTS.md`) its own generated notes could never have named. `--tag-glob PATTERN`
+  takes the repo's own tag shape verbatim (`release.yml` passes `--tag-glob 'v*.*.*'` for the `vX.Y.Z`
+  shape) instead of the `<upstream>-mavericks.*` shape every ported repo carries. A leading `v` is
+  stripped ONLY under `--tag-glob`, never unconditionally — legacysupport carries a stray
+  `v1.5.2-mavericks.1` tag beside the real `1.5.2-mavericks.1`, and stripping `v` on the default path
+  would let the two collide.
+- **A pin that stops being a literal is still a real ingredient — just no longer a movable one.**
+  swift-runtime's `build.sh` pin `SWIFT_TAG` used to be a literal `KEY=VALUE` line and is now a DERIVED
+  expression (`SWIFT_TAG="swift-${SWIFT_VERSION}-RELEASE"`), exactly what "derive, never repeat" (above)
+  asks for. That used to read in the notes as `removed` — the same false statement in the other
+  direction from the `pins.env` false-positive above. It now reads
+  `still used, now computed rather than pinned (was <old value>)`, and never opens a
+  `### Build ingredients` section by itself: a pure derive-refactor with no literal pin actually
+  moving must still produce no section and no "rebuilt because build ingredients moved" claim — only
+  a real move earns the section, and the derived-pin bullet rides along with it when one does.
 - **Every gap is FATAL, and names its cause.** Notes used to be prose that must never fail a release,
   so every generated fragment was appended with `|| true` and `2>/dev/null` — which meant a broken
   hook, an unreadable pin, or a shallow checkout produced a *shorter* body and a green run. openssh
@@ -854,10 +862,28 @@ which is why publishing is idempotent rather than triggered.
   `INGREDIENTS.md` declares `No upstream release notes: <reason>`) or broken, a repackage caller whose
   ingredient pins cannot be read, an ambiguous caller (the conventional-path workflow isn't the one
   calling `repackage-on-ingredient-bump.yml`, and more than one other workflow does), an empty result.
-- **`check-release-notes.sh <file> <version>`** asserts that shape: a title naming this exact version,
-  a `### What changed`, no empty section, a non-empty body. The generator self-checks what it just
-  wrote with it; `publish-release.yml` will check what it is about to publish with it too, once that
-  enforcement lands.
+- **Three enforcement layers, because each catches what the others structurally cannot.** The **gate**
+  (`check-family-conventions.sh` check 14, on every PR) asks whether a repo's `release.yml` actually
+  calls `release-notes.sh` — wiring, checked before anything ships, where a human can still fix it
+  cheaply. The **publisher** (`check-release-notes.sh`, run from `publish-release.yml` at release time)
+  asks whether the body about to be published has the family shape, which the gate cannot see: a
+  workflow can be correctly wired and still hand the generator arguments that yield a malformed body.
+  The **conformance** check (`check-artifact-conformance.sh`'s `notes` check, at package time, see
+  "Artifact conformance" below) asks whether the Sparkle appcast's `<description>` and the GitHub
+  Release body actually agree, which neither the gate nor the publisher can see, since both run before
+  the appcast exists. Passing any two of these leaves a real gap: it is exactly how six products used
+  to publish "Automated release for Mac OS X 10.9 (Mavericks)." as their entire notes, tailscale shipped
+  an empty body, and a 10.9 user's update dialog could quietly show different words than the Release
+  page. Each layer sits at the one point in the pipeline where its failure is visible.
+- **`check-release-notes.sh <file> <version>`** is the publisher's shape check: a title naming this
+  exact version, a `### What changed`, no empty section, a non-empty body. **A leading `v` is not part
+  of the version** — shipyard tags `v1.0.209` but its generated title reads `## Shipyard 1.0.209` — so
+  the check strips a leading `v` before comparing (guarded against the degenerate case where the
+  version literally IS `v`, where stripping would leave an empty string that glob-matches anything).
+  The generator self-checks what it just wrote with it, and `publish-release.yml` calls it again at
+  release time — checked structurally (the call carries no `||`/`&&`/`;`/pipe fallback and no `set +e`
+  precedes it), not by grepping for a token list, so `|| true`, `|| exit 0`, or wrapping the call in
+  `set +e` are all caught the same as an outright missing call.
 - **`comparison_key()` in `lib.sh` is the one Sparkle-comparable-version derivation**
   (`-mavericks.N` → `.N`, and OpenSSH-portable's `9.9p2` → `9.9.2`), now shared by `gen_appcast.sh` and
   `previous-release-tag.sh`. Its absence from the latter is why no openssh release ever listed a moved
@@ -1210,20 +1236,31 @@ on any of these. It exists because seven repos started from one shape and drifte
 four concurrency policies, three repos not running their own tests, and 11 copies of one incantation —
 none of which anything detected. A convention that is not checked is a convention that drifts.
 
+**"On a non-comment line" matters, and it is checked for, not assumed:** every presence question below
+goes through a shared `ci_mentions()`/`strip_arg()` helper that drops whole-line comments first (a
+trailing inline comment on a line that also carries code still counts — dropping the whole line would
+also drop a real `--out`). Unfiltered, this family's own habit of documenting a rule right in the
+workflow it governs makes it wrong in both directions: an appended `# never: cp
+release-notes/README.md dist/RELEASE_NOTES.md` turned a correct openssh red, and magic-trackpad2's five
+comment-only mentions of `release-notes.sh` kept the gate printing "ok" after its one real invocation
+was replaced by `:`. A gate a maintainer reddens by writing the rule down is the check-7d failure of
+2026-09-09 again, and `@v1` carries either direction to twelve other repos within minutes.
+
 | Check | Why it is a gate |
 |---|---|
 | `release.yml` declares `concurrency:`, its group IS keyed on `github.run_id`, and `cancel-in-progress` names `pull_request` | A run that can publish must be alone in its group. `cancel-in-progress: false` protects the RUNNING job and not the QUEUED one, so a shared group silently discards releases — golang lost one 13 seconds after the run that evicted it. Both halves are checked, because either alone lets the old shape back in |
-| Test files exist ⇒ some workflow runs them | Nine unrun tests, two silently rotted, is what "we'll wire it up later" looks like |
+| Test files exist ⇒ some workflow runs them, on a non-comment line | Nine unrun tests, two silently rotted, is what "we'll wire it up later" looks like — a commented-out `run-repo-tests.sh` line must not read as wired |
 | `INGREDIENTS.md` exists | An input nobody documented is an input nobody is watching |
 | No Renovate key the shared preset already sets | A local copy silently stops tracking the preset when the preset changes |
-| The release publishes a notes body | An empty Release body ships unnoticed — tailscale's did, on every release |
+| **(weak form)** some workflow mentions `publish-release.yml`, `--notes-file`, `body_path` or `--generate-notes`, on a non-comment line | Only asks whether *some* notes reached the release — an empty body ships unnoticed, as tailscale's did on every release. Kept for a repo that has not adopted `publish-release.yml`; superseded for wiring by check 14 below, which a `--generate-notes` repo now fails outright |
 | `VERSION` is **not committed** (an untracked one is fine — it's a build product) | The committed copy drifts: container-tools built `-mavericks.14` from a file saying `.2`, which also made its tag path (`tag == VERSION`) impossible to satisfy |
 | Every workflow parses **with duplicate keys rejected** | A second `with:` on one step is legal YAML — last key wins — so ordinary parsers accept it and GitHub refuses to run the workflow. No other gate can catch it, because CI never starts |
 | No `INGREDIENTS.md` row marked ❌ unless it says **untrackable** | An ingredient nobody tracks goes stale silently; a bare ❌ reads as an oversight rather than a decision |
 | A **committed** `build/` or `scripts/upstream-release-notes-url.sh`, or an `INGREDIENTS.md` line `No upstream release notes: <reason>` | A `-mavericks.1` exists to ship someone else's changes; notes that name the version without linking what changed leave the reader to go find it |
-| A workflow that runs `sign_and_appcast.sh` has some workflow calling `scan-for-key.yml` | A signing run's logs are public and GitHub masks only the literal secret; `publish-release.yml` refuses a signed release with no scan record, and this catches the missing job on a PR instead |
+| A workflow that runs `sign_and_appcast.sh` has some workflow calling `scan-for-key.yml`, on a non-comment line | A signing run's logs are public and GitHub masks only the literal secret; `publish-release.yml` refuses a signed release with no scan record, and this catches the missing job on a PR instead — a commented-out mention no longer vouches for the job existing |
 | If `lines/` exists, every `lines/<id>/UPSTREAM_VERSION` has its OWN **capped** Renovate manager | An uncapped line walks onto the next major it was never built for; an unmanaged line goes stale silently; one manager spanning lines cannot cap each |
 | A Renovate manager whose captured pin ends in `-mavericks.N` has a `regex:` versioning that captures N | Default versioning coerces `-mavericks.N` away, so every repackage compares equal and the pin never moves — silently, with the dep listed as tracked. swift-runtime missed three swift-toolchain releases this way |
+| **14.** Some workflow calls `release-notes.sh` (not just names it) to build the body, on a non-comment line; the body is never hand-written into `RELEASE_NOTES.md`; no workflow passes `--generate-notes` | This is the check that replaced five hand-rolled shapes: six products published "Automated release for Mac OS X 10.9 (Mavericks)." as their entire notes — every release, including Renovate repackages whose only reason to exist was an ingredient bump — and tailscale published an empty body. Check 5 above only asks whether *some* notes reached the release; this asks whether they came from the one shared generator, checked on the PR, where a human can still fix it cheaply. The publisher (`check-release-notes.sh`, below) checks the body's SHAPE at release time — this checks the WIRING before that |
 
 Wire it with the reusable workflow — three lines, and it never changes when a check is added:
 
@@ -1285,7 +1322,8 @@ in the same commit.
    state which ingredient moved.
 9. Call `check-family-conventions.sh` in CI, and run the suite with `run-repo-tests.sh`. The gate fails
    on: no `concurrency:`; test files nothing runs; no `INGREDIENTS.md`; a Renovate key the preset
-   already sets; a release that publishes no notes body.
+   already sets; a release that publishes no notes body; a release body not built by `release-notes.sh`
+   (check 14 — `--generate-notes` no longer passes).
 8. Check in `.claude/settings.json` pointing at the `modernmavericks` marketplace (hosted in
    `mavericks-shipyard`) so contributors' agents load these conventions — do NOT copy the SKILL.md:
    ```json
@@ -1370,19 +1408,20 @@ it here.** A silently dropped increment is how the family drifted in the first p
       first) — done 2026-09-12. Every `release.yml` in the family now calls `release-notes.sh`
       directly; `release-notes-file.sh` is legacy, with zero product-repo callers (shipyard retains the
       wrapper and its test until the wrapper is retired). See Release notes,
-      above, for the per-repo `--product`/`--line`/`--min-os` decisions this migration recorded, the
-      three generator defects it found and fixed, and what it deliberately left deferred
-- [ ] **The three enforcement layers** (a conventions-gate check that a repo actually calls the
-      generator; publisher body-shape validation; artifact-conformance appcast-vs-body agreement) —
-      not yet designed, follow as a separate plan
-- [ ] `previous-release-tag.sh`'s baseline glob (`*-mavericks.*`) excludes every self-upstream repo
-      (shipyard, porthole, magic-trackpad2) from a compare link and a `### Build ingredients` section
-      — deferred during the per-repo migration; named here so it is findable (Release notes,
-      "Deliberately deferred")
-- [ ] swift-runtime's `build.sh` has one pin (`SWIFT_TAG`) that reads as falsely *removed* now that
-      it is a derived expression rather than a literal — same defect family as the `pins.env`
-      false-positive fixed in this migration (`f54a0cd`), left alone because it under-reports rather
-      than over-claims
+      above, for the per-repo `--product`/`--line`/`--min-os` decisions this migration recorded and the
+      three generator defects it found and fixed
+- [x] **The three enforcement layers** — gate (`check-family-conventions.sh` check 14: does a repo's
+      PR actually wire `release-notes.sh`), publisher (`check-release-notes.sh` inside
+      `publish-release.yml`: does the body about to publish have the family shape), conformance
+      (`check-artifact-conformance.sh`'s `notes` check: does the appcast agree with the body) — done
+      2026-09-12. See Release notes, "Three enforcement layers", above
+- [x] `previous-release-tag.sh --tag-glob` closed the self-upstream baseline gap — done 2026-09-12.
+      shipyard, porthole and magic-trackpad2 now get a real compare link and `### Build ingredients`
+      section from their own tag shape. See Release notes, above
+- [x] swift-runtime's `build.sh` pin `SWIFT_TAG` no longer reads as falsely *removed* now that it is a
+      derived expression rather than a literal — done 2026-09-12: it reports
+      `still used, now computed rather than pinned (was <old value>)`, and never opens a
+      `### Build ingredients` section by itself. See Release notes, above
 - [ ] **North star, not yet designed:** should a product repo carry build machinery at all? One
       declarative config per repo (upstream, verification, binaries, ingredients, updater) that
       shipyard turns into the build, package, release, and checks — a repo that cannot express a
