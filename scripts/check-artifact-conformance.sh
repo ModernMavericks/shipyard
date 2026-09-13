@@ -48,15 +48,22 @@ facts="$tmp/facts"; cat > "$facts"
 # emitted EARLY (they come from INGREDIENTS.md, before dist/ is walked), so they SURVIVE a truncation
 # -- `deviation end-of-facts ...` would switch off the very check that notices the switch-off. And
 # exit, rather than accumulating: with no records there is nothing else worth reporting.
+# An `abort` record means the producer gave up, so the stream is untrustworthy whatever else it says.
+# Checked SEPARATELY from the sentinel, and first: normally the two cannot coexist, because a producer
+# that aborts never reaches its sentinel -- so a stream carrying both has a completion marker that did
+# not come from a completed run. One way to get there: a file in dist/ whose NAME contains a newline
+# splits its own `asset` record and can forge a bare `end-of-facts` line. Keying only on the sentinel
+# read that stream as "conformance: ok" while the producer was saying it had failed, which is the same
+# quiet switch-off this whole guard exists to stop.
+why="$(sed -n 's/^abort \(..*\)$/\1/p' "$facts" | head -1)"
+if [ -n "$why" ]; then
+  echo "conformance: artifact-facts.sh aborted: $why" >&2
+  echo "conformance: the fact stream cannot be trusted; nothing was checked" >&2
+  exit 2
+fi
+
 if ! grep -q '^end-of-facts$' "$facts"; then
-  # abort <reason> is what the producer says on its way out. Surface it: "the stream stopped" is true
-  # but useless; "gen_appcast.sh --render-notes failed for RELEASE_NOTES.md" is actionable.
-  why="$(sed -n 's/^abort \(..*\)$/\1/p' "$facts" | head -1)"
-  if [ -n "$why" ]; then
-    echo "conformance: the fact stream is incomplete -- artifact-facts.sh aborted: $why" >&2
-  else
-    echo "conformance: the fact stream is incomplete -- artifact-facts.sh did not run to completion (no end-of-facts record); nothing was checked" >&2
-  fi
+  echo "conformance: the fact stream is incomplete -- artifact-facts.sh did not run to completion (no end-of-facts record); nothing was checked" >&2
   exit 2
 fi
 

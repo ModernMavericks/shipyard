@@ -838,8 +838,11 @@ which is why publishing is idempotent rather than triggered.
   three used to get neither a compare link nor a `### Build ingredients` section, even where a real one
   existed: porthole has four Renovate-tracked ingredient pins (skalibs, s6, the Debian base image,
   xpra — see its `INGREDIENTS.md`) its own generated notes could never have named. `--tag-glob PATTERN`
-  takes the repo's own tag shape verbatim (`release.yml` passes `--tag-glob 'v*.*.*'` for the `vX.Y.Z`
-  shape) instead of the `<upstream>-mavericks.*` shape every ported repo carries. A leading `v` is
+  takes a tag shape verbatim instead of the `<upstream>-mavericks.*` shape every ported repo carries.
+  **No repo passes it for notes**: `release-notes.sh` derives the glob from the tag being published
+  (`v*.*.*` for `vX.Y.Z`, `[0-9]*` for porthole's `YYYYMMDD.N`) and calls `previous-release-tag.sh`
+  itself, so all three got a baseline with no per-repo change. The `--tag-glob 'v*.*.*'` you will find
+  in shipyard's own `release.yml` is a different caller — `assert_appcast_upgradeable.sh`. A leading `v` is
   stripped ONLY under `--tag-glob`, never unconditionally — legacysupport carries a stray
   `v1.5.2-mavericks.1` tag beside the real `1.5.2-mavericks.1`, and stripping `v` on the default path
   would let the two collide.

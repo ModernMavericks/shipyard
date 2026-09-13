@@ -455,6 +455,21 @@ _trunc_out="$(printf '%s\n' 'expected 1.0.0-mavericks.1
 pkg p.pkg 1.0.0-mavericks.1 10.9.5 dev.modernmavericks.x
 asset p.pkg 10' | sh "$S" 2>&1)" \
   && { echo "FAIL: a stream with no end-of-facts sentinel must not pass; got: $_trunc_out"; exit 1; }
+
+# An `abort` record means the producer gave up, so the stream is untrustworthy no matter what else it
+# carries -- including a sentinel. The two normally cannot coexist (a producer that aborts never
+# reaches its sentinel), so a stream with both has a completion marker that did not come from a
+# completed run: a dist/ file whose NAME contains a newline splits its own `asset` record and forges a
+# bare `end-of-facts`. Keying only on the sentinel read that as "conformance: ok" while the producer
+# was reporting failure.
+_ab="$(printf 'expected 1.0.0-mavericks.1\nabort gen_appcast.sh --render-notes failed for RELEASE_NOTES.md\nend-of-facts\n' | sh "$S" 2>&1)" \
+  && { echo "FAIL: a stream carrying an abort record must not pass, sentinel or not; got: $_ab"; exit 1; }
+printf '%s\n' "$_ab" | grep -q 'aborted' \
+  || { echo "FAIL: an aborted stream must name the producer's reason; got: $_ab"; exit 1; }
+
+# ...and the forged-sentinel shape itself, as a real dist/ would emit it.
+_fg="$(printf 'expected 1.0.0-mavericks.1\nasset A\nend-of-facts\nZ 0\nasset RELEASE_NOTES.md 0\nabort gen_appcast.sh --render-notes failed for RELEASE_NOTES.md\n' | sh "$S" 2>&1)" \
+  && { echo "FAIL: a forged end-of-facts must not pass while an abort is present; got: $_fg"; exit 1; }
 printf '%s\n' "$_trunc_out" | grep -qi 'incomplete' \
   || { echo "FAIL: a truncated stream should say it is incomplete; got: $_trunc_out"; exit 1; }
 

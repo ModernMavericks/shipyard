@@ -584,8 +584,11 @@ if [ -n "$CI_FILES" ]; then
     # the cost clause 4 already pays for genuinely unresolvable values and should not pay twice.
     #
     # After the comment filter, deliberately: dropping comment lines is what keeps a repo documenting
-    # the ban from failing it, and that rule wins. The residual is a comment line ending in a
-    # backslash, which would join the two code lines around it -- rarer than the shape this fixes.
+    # the ban from failing it, and that rule wins. The residual is that ANY comment line sitting
+    # between a continuation and its value is dropped first, so the two code lines around it join --
+    # the comment's own trailing backslash is beside the point, since its whole line is gone before
+    # awk sees it. That direction is lenient (a value read where none was written), never a false
+    # FAIL, so it cannot redden a correct repo -- which is the failure this clause already caused once.
     # shellcheck disable=SC2086  # CI_FILES is a deliberate word-split list of paths
     grep -hv '^[[:space:]]*#' $CI_FILES 2>/dev/null \
       | awk '
