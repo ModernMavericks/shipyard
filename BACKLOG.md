@@ -153,3 +153,52 @@ to 10.x" to six reviewable items, four of them one-liners.
 
 Suggested default: openssh, ed25519, and anything touching signing or key handling get a diff-first
 pause regardless of how routine the change looks.
+
+## 6. Comments gate: two blind spots in `check-comments.sh`
+
+**Cannot see inside heredocs.** ~40 lines of prose in `package-pkg.sh`'s rendered pre/postinstall —
+including the whole R-P1-24 two-updaters-forever reasoning — will never be swept or re-checked. Known
+limitation in the comments spec; demonstrated during the shipyard-cmake collapse, 2026-09-13.
+
+**Ignores trailing comments entirely.** `ci.yml`'s untagged `# the CMake modules gate on Apple clang`
+passes only because it shares a line with code. This is ruling 3's deliberate scope exclusion, now with
+a live example.
+
+## 7. No consumer repo documents how to obtain shipyard outside CI
+
+All 14 surveyed 2026-09-13; the real instructions live in code comments, CLAUDE.md, or test scripts. The
+shipyard-cmake cutover makes this worse — a developer now needs shipyard-cmake installed — and only
+macho-tools' README was fixed, because there the existing text became actively false rather than merely
+absent.
+
+## 8. 1password's `cmake-10_9-gate` job cannot succeed as checked out
+
+It runs `cmake --preset cross` against a "Porthole viewer", but the repo has no CMakeLists.txt, no
+CMakePresets.json and no Porthole source. Pre-existing and unrelated to the flag day, which deliberately
+left it alone (flag-day spec D8).
+
+## 9. Check 18 has three blind spots, and real breakage hid in all of them
+
+It reads workflow `run:` blocks plus `git ls-files -- '*.sh'` minus `tests/`, so `*.bats`, `tests/*.sh`,
+extensionless executables, `*.cmake` and `CMakeLists.txt` are invisible; and it ignores a bare `(` even
+inside files it does read.
+
+**Concrete evidence, all found during the 2026-09-13 cutover:** porthole's
+`tests/test_standalone_build.bats` ran a real configure that CI executes via `run-repo-tests.sh`;
+porthole's extensionless `bin/generate-viewer` printed the build recipe users follow; and five
+`echo "... (build it: cmake --build ...)"` recipes across clang, golang, openssh and swift-runtime.
+
+Across the fourteen repos the gate saw a **minority** of the real call sites — magic-trackpad2 was 4
+visible against 18 invisible, macho-tools 2 of 12, macports-legacy-support 2 of 10.
+
+A gate that reports `ok` because it did not look is worse than no gate, because the `ok` is believed.
+
+## 10. Check 16 has two blind spots of its own
+
+It matches only `.cmake/package[s]`, so a locator reading `$HOME/.local/share/cmake/...` is invisible —
+clang and golang each carried a second locator in `build/versions.sh`, and swift-runtime two more in
+`package.sh` and `scripts/guard.sh`.
+
+It also skips `tests/` entirely, so a locator there can match its pattern exactly and still never be
+reported — magic-trackpad2's `tests/test_appcast_notes.sh` read `~/.cmake/packages/MavericksShipyard`
+and the gate said nothing.
